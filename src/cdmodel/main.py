@@ -2,8 +2,8 @@
 from lightning.pytorch.cli import LightningCLI
 
 # simple demo classes for your convenience
-from project.model import ExampleModel
-from project.data import ExampleDataModule
+from cdmodel.model import ExampleModel
+from cdmodel.data import ExampleDataModule
 
 
 def cli_main():

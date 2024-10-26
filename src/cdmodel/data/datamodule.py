@@ -1,7 +1,7 @@
 from lightning import LightningDataModule
 from torch.utils.data import DataLoader
 
-from project.data.dataset import ExampleDataset
+from cdmodel.data.dataset import ExampleDataset
 
 
 class ExampleDataModule(LightningDataModule):
