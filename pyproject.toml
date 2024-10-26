@@ -1,0 +1,45 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "project"
+version = "0.0.1"
+authors = [
+  { name="Author Name", email="email@example.com" },
+]
+description = "description"
+readme = "README.md"
+requires-python = ">=3.12"
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Operating System :: OS Independent",
+]
+dependencies = [
+    "click==8.1.7",
+    "jsonargparse[signatures]==4.33.2",
+    "lightning==2.4.0",
+    "pytest==8.3.3",
+    "tensorboard==2.18.0",
+    "torch==2.5.0",
+]
+
+[tool.setuptools.package-data]
+"project" = ["py.typed"]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[project.urls]
+"Homepage" = "https://github.com/mattm458/ml-template"
+"Bug Tracker" = "https://github.com/mattm458/ml-template/issues"
+
+[project.scripts]
+project = "project.project:cli_main"
+
+[tool.pytest.ini_options]
+addopts = [
+    "--import-mode=importlib",
+]
+pythonpath = "src"
+testpaths = "tests"
