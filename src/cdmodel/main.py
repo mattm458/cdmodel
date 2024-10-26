@@ -3,11 +3,11 @@ from lightning.pytorch.cli import LightningCLI
 
 # simple demo classes for your convenience
 from cdmodel.model import ExampleModel
-from cdmodel.data import ExampleDataModule
+from cdmodel.data import ConversationDataModule
 
 
 def cli_main():
-    cli = LightningCLI(ExampleModel, ExampleDataModule)
+    cli = LightningCLI(ExampleModel, ConversationDataModule)
 
 
 if __name__ == "__main__":

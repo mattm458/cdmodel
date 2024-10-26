@@ -1,1 +1,1 @@
-from cdmodel.data.datamodule import ExampleDataModule
+from cdmodel.data.datamodule import ConversationDataModule
