@@ -19,7 +19,7 @@ dependencies = [
     "click==8.1.7",
     "jsonargparse[signatures]==4.33.2",
     "lightning==2.4.0",
-    "pandas==2.2.3",`
+    "pandas==2.2.3",
     "pandas-stubs==2.2.3.241009",
     "pytest==8.3.3",
     "tensorboard==2.18.0",
