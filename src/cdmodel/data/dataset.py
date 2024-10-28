@@ -57,12 +57,12 @@ class ConversationDataset(Dataset):
         embeddings: Tensor = torch.load(
             path.join(self.dataset_dir, "embeddings", f"{conv_id}-embeddings.pt"),
             weights_only=True,
-        ).unsqueeze(0)
+        )
 
         embeddings_turn_len: Tensor = torch.load(
             path.join(self.dataset_dir, "embeddings", f"{conv_id}-lengths.pt"),
             weights_only=True,
-        ).unsqueeze(0)
+        )
 
         speaker_id: list[list[int]] = [conv_data["speaker_id"]]
         speaker_id_idx: Tensor = torch.tensor(
@@ -75,7 +75,7 @@ class ConversationDataset(Dataset):
             segment_features=segment_features,
             embeddings=embeddings,
             embeddings_segment_len=embeddings_turn_len,
-            num_segments=[len(segment_features)],
+            num_segments=[segment_features.shape[1]],
             speaker_id=speaker_id,
             speaker_id_idx=speaker_id_idx,
         )
