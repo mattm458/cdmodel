@@ -1,5 +1,6 @@
 import json
 from os import path
+from random import Random
 from typing import Final
 
 import pandas as pd
@@ -8,6 +9,9 @@ from torch import Tensor
 from torch.utils.data import Dataset
 
 from cdmodel.common import ConversationData
+from cdmodel.common.role_assignment import (AnalysisRole, DialogueSystemRole,
+                                            RoleAssignmentStrategy, RoleType,
+                                            assign_speaker_roles)
 
 
 def load_set_ids(dataset_dir: str, dataset_subset: str, set: str) -> list[int]:
@@ -23,6 +27,8 @@ class ConversationDataset(Dataset):
         zero_pad: bool,
         subset: str,
         set: str,
+        role_type: RoleType,
+        role_assignment_strategy: RoleAssignmentStrategy,
     ):
         super().__init__()
 
@@ -38,6 +44,11 @@ class ConversationDataset(Dataset):
             path.join(dataset_dir, f"speaker-ids-{subset}.csv"),
             index_col="speaker_id",
         )["idx"].to_dict()
+        self.role_type: Final[RoleType] = role_type
+        self.role_assignment_strategy: Final[RoleAssignmentStrategy] = (
+            role_assignment_strategy
+        )
+        self.random = Random()
 
     def __len__(self) -> int:
         return len(self.conv_ids)
@@ -48,11 +59,9 @@ class ConversationDataset(Dataset):
         with open(path.join(self.dataset_dir, "segments", f"{conv_id}.json")) as infile:
             conv_data: Final[dict] = json.load(infile)
 
-        segment_features: Tensor = (
-            torch.tensor([conv_data[feature] for feature in self.segment_features])
-            .swapaxes(0, 1)
-            .unsqueeze(0)
-        )
+        segment_features: Tensor = torch.tensor(
+            [conv_data[feature] for feature in self.segment_features]
+        ).swapaxes(0, 1)
         segment_features_delta = segment_features.diff(
             dim=1, prepend=torch.zeros(1, 1, segment_features.shape[2])
         )
@@ -67,11 +76,24 @@ class ConversationDataset(Dataset):
             weights_only=True,
         )
 
-        speaker_id: list[list[int]] = [conv_data["speaker_id"]]
+        speaker_id: list[int] = conv_data["speaker_id"]
         speaker_id_idx: Tensor = torch.tensor(
             [self.speaker_ids[x] for x in conv_data["speaker_id"]],
             dtype=torch.long,
-        ).unsqueeze(0)
+        )
+
+        # Establish speaker roles
+        if self.role_assignment_strategy == RoleAssignmentStrategy.random_deterministic:
+            self.random.seed(conv_id)
+        speaker_role: Final[list[DialogueSystemRole] | list[AnalysisRole]] = (
+            assign_speaker_roles(
+                speaker_ids=speaker_id,
+                role_type=self.role_type,
+                role_assignment_strategy=self.role_assignment_strategy,
+                random=self.random,
+            )
+        )
+        speaker_role_idx = torch.tensor([x.value for x in speaker_role])
 
         return ConversationData(
             conv_id=[conv_id],
@@ -82,4 +104,6 @@ class ConversationDataset(Dataset):
             num_segments=[segment_features.shape[1]],
             speaker_id=speaker_id,
             speaker_id_idx=speaker_id_idx,
+            speaker_role=speaker_role,
+            speaker_role_idx=speaker_role_idx,
         )

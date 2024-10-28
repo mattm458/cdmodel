@@ -5,6 +5,7 @@ from torch import Tensor, nn
 from torch.nn import functional as F
 
 from cdmodel.common import ConversationData
+from cdmodel.common.role_assignment import Role
 
 
 def collate_fn(batches: list[ConversationData]) -> ConversationData:
@@ -16,6 +17,8 @@ def collate_fn(batches: list[ConversationData]) -> ConversationData:
     num_segments_all: Final[list[int]] = []
     speaker_id_all: Final[list[list[int]]] = []
     speaker_id_idx_all: Final[list[Tensor]] = []
+    speaker_role_all: Final[list[list[Role]]] = []
+    speaker_role_idx_all: Final[list[Tensor]] = []
 
     # For padding embedding segments
     longest_embedding_segment: int = 0
@@ -29,6 +32,8 @@ def collate_fn(batches: list[ConversationData]) -> ConversationData:
         num_segments_all.extend(batch.num_segments)
         speaker_id_all.extend(batch.speaker_id)
         speaker_id_idx_all.append(batch.speaker_id_idx.squeeze(0))
+        speaker_role_all.extend(batch.speaker_role)
+        speaker_role_idx_all.append(batch.speaker_role_idx.squeeze(0))
 
         max_embeddings_len: int = int(batch.embeddings_segment_len.max().item())
         if longest_embedding_segment < max_embeddings_len:
@@ -71,6 +76,11 @@ def collate_fn(batches: list[ConversationData]) -> ConversationData:
         speaker_id_idx_all, batch_first=True
     )
 
+    speaker_role: Final[list[list[Role]]] = speaker_role_all
+    speaker_role_idx: Final[Tensor] = nn.utils.rnn.pad_sequence(
+        speaker_role_idx_all, batch_first=True
+    )
+
     return ConversationData(
         conv_id=conv_id,
         segment_features=segment_features,
@@ -80,4 +90,6 @@ def collate_fn(batches: list[ConversationData]) -> ConversationData:
         num_segments=num_segments,
         speaker_id=speaker_id,
         speaker_id_idx=speaker_id_idx,
+        speaker_role=speaker_role,
+        speaker_role_idx=speaker_role_idx,
     )
