@@ -15,7 +15,7 @@ class ConversationDataModule(LightningDataModule):
         segment_features: list[str],
         zero_pad: bool,
         batch_size: int,
-        num_workers: int = 4,
+        num_workers: int,
     ):
         super().__init__()
 
