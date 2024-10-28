@@ -1,4 +1,3 @@
-from os import path
 from typing import Final
 
 from lightning import LightningDataModule
@@ -6,11 +5,6 @@ from torch.utils.data import DataLoader
 
 from cdmodel.data.collate_fn import collate_fn
 from cdmodel.data.dataset import ConversationDataset
-
-
-def __load_set_ids(dataset_dir: str, dataset_subset: str, set: str) -> list[int]:
-    with open(path.join(dataset_dir, f"{set}-{dataset_subset}.csv")) as infile:
-        return [int(x) for x in infile.readlines() if len(x) > 0]
 
 
 class ConversationDataModule(LightningDataModule):
@@ -40,38 +34,41 @@ class ConversationDataModule(LightningDataModule):
             case "fit":
                 self.dataset_train = ConversationDataset(
                     dataset_dir=self.dataset_dir,
-                    conv_ids=__load_set_ids(
-                        self.dataset_dir, self.data_subset, "train"
-                    ),
                     segment_features=self.segment_features,
                     zero_pad=self.zero_pad,
+                    subset=self.data_subset,
+                    set="train",
                 )
                 self.dataset_validate = ConversationDataset(
                     dataset_dir=self.dataset_dir,
-                    conv_ids=__load_set_ids(self.dataset_dir, self.data_subset, "val"),
                     segment_features=self.segment_features,
                     zero_pad=self.zero_pad,
+                    subset=self.data_subset,
+                    set="val",
                 )
             case "validate":
                 self.dataset_validate = ConversationDataset(
                     dataset_dir=self.dataset_dir,
-                    conv_ids=__load_set_ids(self.dataset_dir, self.data_subset, "val"),
                     segment_features=self.segment_features,
                     zero_pad=self.zero_pad,
+                    subset=self.data_subset,
+                    set="val",
                 )
             case "test":
                 self.dataset_test = ConversationDataset(
                     dataset_dir=self.dataset_dir,
-                    conv_ids=__load_set_ids(self.dataset_dir, self.data_subset, "test"),
                     segment_features=self.segment_features,
                     zero_pad=self.zero_pad,
+                    subset=self.data_subset,
+                    set="test",
                 )
             case "predict":
                 self.dataset_predict = ConversationDataset(
                     dataset_dir=self.dataset_dir,
-                    conv_ids=__load_set_ids(self.dataset_dir, self.data_subset, "test"),
                     segment_features=self.segment_features,
                     zero_pad=self.zero_pad,
+                    subset=self.data_subset,
+                    set="test",
                 )
 
     def train_dataloader(self) -> DataLoader:
