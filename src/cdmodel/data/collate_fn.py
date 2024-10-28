@@ -10,6 +10,7 @@ from cdmodel.common import ConversationData
 def collate_fn(batches: list[ConversationData]) -> ConversationData:
     conv_id_all: Final[list[int]] = []
     segment_features_all: Final[list[Tensor]] = []
+    segment_features_delta_all: Final[list[Tensor]] = []
     embeddings_all: Final[list[Tensor]] = []
     embeddings_segment_len_all: Final[list[Tensor]] = []
     num_segments_all: Final[list[int]] = []
@@ -22,6 +23,7 @@ def collate_fn(batches: list[ConversationData]) -> ConversationData:
     for batch in batches:
         conv_id_all.extend(batch.conv_id)
         segment_features_all.append(batch.segment_features.squeeze(0))
+        segment_features_delta_all.append(batch.segment_features_delta.squeeze(0))
         embeddings_all.append(batch.embeddings)
         embeddings_segment_len_all.append(batch.embeddings_segment_len)
         num_segments_all.extend(batch.num_segments)
@@ -36,6 +38,10 @@ def collate_fn(batches: list[ConversationData]) -> ConversationData:
 
     segment_features: Final[Tensor] = nn.utils.rnn.pad_sequence(
         segment_features_all, batch_first=True
+    )
+
+    segment_features_delta: Final[Tensor] = nn.utils.rnn.pad_sequence(
+        segment_features_delta_all, batch_first=True
     )
 
     # Embeddings are stored in a 3-dimensional tensor with the following dimensions:
@@ -68,6 +74,7 @@ def collate_fn(batches: list[ConversationData]) -> ConversationData:
     return ConversationData(
         conv_id=conv_id,
         segment_features=segment_features,
+        segment_features_delta=segment_features_delta,
         embeddings=embeddings,
         embeddings_segment_len=embeddings_segment_len,
         num_segments=num_segments,

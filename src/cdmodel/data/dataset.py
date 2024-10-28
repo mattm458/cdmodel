@@ -53,6 +53,9 @@ class ConversationDataset(Dataset):
             .swapaxes(0, 1)
             .unsqueeze(0)
         )
+        segment_features_delta = segment_features.diff(
+            dim=1, prepend=torch.zeros(1, 1, segment_features.shape[2])
+        )
 
         embeddings: Tensor = torch.load(
             path.join(self.dataset_dir, "embeddings", f"{conv_id}-embeddings.pt"),
@@ -73,6 +76,7 @@ class ConversationDataset(Dataset):
         return ConversationData(
             conv_id=[conv_id],
             segment_features=segment_features,
+            segment_features_delta=segment_features_delta,
             embeddings=embeddings,
             embeddings_segment_len=embeddings_turn_len,
             num_segments=[segment_features.shape[1]],

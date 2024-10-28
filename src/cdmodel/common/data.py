@@ -4,11 +4,17 @@ from torch import Tensor
 
 
 class ConversationData(NamedTuple):
+    # Metadata
     conv_id: list[int]
+    num_segments: list[int]
+
+    # Turn-level features
     segment_features: Tensor
+    segment_features_delta: Tensor
+
+    # Turn-level word embeddings
     embeddings: Tensor
     embeddings_segment_len: Tensor
-    num_segments: list[int]
 
     # Speaker data
     speaker_id: list[list[int]]
