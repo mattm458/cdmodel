@@ -1,5 +1,5 @@
 from enum import Enum
-from typing import Final, NamedTuple
+from typing import Final, NamedTuple, Optional
 
 import torch
 from lightning import pytorch as pl
@@ -55,7 +55,10 @@ class CDModel(pl.LightningModule):
         speaker_role_encoding: SpeakerRoleEncoding,
         role_type: RoleType,
         lr: float,
-        # TODO: Add configuration for conversation style tokens
+        ext_ist_enabled: bool,  # Whether to enable ISTs (see below)
+        ext_ist_token_dim: Optional[int] = None,  # The dimensionality of each IST token
+        ext_ist_token_count: Optional[int] = None,  # The number of IST tokens
+        ext_ist_encoder_dim: Optional[int] = None,  # The IST encoder output dimensions
     ):
         super().__init__()
         self.save_hyperparameters()
@@ -204,6 +207,57 @@ class CDModel(pl.LightningModule):
             ]
         )
 
+        # Extensions
+        # =====================
+
+        # Interaction Style Tokens (IST)
+        # ---
+        # Based on Tacotron style tokens from Wang et al (2018).
+        # Creates a bank of tokens trained to be associated with different conversational interaction
+        # styles as expressed through turn-level feature deltas. A feature delta encoder predicts
+        # weights for each of the tokens, which are summed into an interaction style embedding.
+        # Currently, the interaction style embedding is given as context to the attention layer, but
+        # not the decoder. The goal is to investigate whether different interaction styles can influence
+        # which historical turns the model finds most useful.
+        #
+        # Currently, our IST experiments are related to determining the interaction style of a speaker.
+        # That is, the interaction style embedding is meant to embody the "personality" of the person
+        # currently speaking. In the future, we may experimen with generating a separate token for the
+        # partner, both to influence the partner's personality when the model is in analytical mode,
+        # and to determine if the model can account for its partner's personality when predicting its own
+        # speech features.
+        self.ext_ist_enabled: Final[bool] = ext_ist_enabled
+        self.ist_tokens: nn.Parameter | None = None
+        self.ist_encoder: nn.GRU | None = None
+        self.ist_linear: nn.Sequential | None = None
+        if ext_ist_enabled:
+            if ext_ist_token_count is None:
+                raise Exception(
+                    "If ISTs are enabled, ext_ist_token_count cannot be None"
+                )
+            if ext_ist_token_dim is None:
+                raise Exception("If ISTs are enabled, ext_ist_token_dim cannot be None")
+            if ext_ist_encoder_dim is None:
+                raise Exception(
+                    "If ISTs are enabled, ext_ist_encoder_dim cannot be None"
+                )
+
+            self.ist_tokens = nn.Parameter(
+                torch.rand(ext_ist_token_count, ext_ist_token_dim)
+            )
+            self.ist_encoder = nn.GRU(
+                self.num_features, ext_ist_encoder_dim, bidirectional=True
+            )
+            self.ist_linear = nn.Sequential(
+                nn.Linear(ext_ist_encoder_dim * 2, ext_ist_encoder_dim),
+                nn.ELU(),
+                nn.Linear(ext_ist_encoder_dim, ext_ist_encoder_dim // 2),
+                nn.ELU(),
+                nn.Linear(ext_ist_encoder_dim // 2, ext_ist_token_count),
+                nn.Sigmoid(),
+            )
+
+    # TODO: Keep the input parameters cleaned up
     def forward(
         self,
         segment_features: Tensor,
