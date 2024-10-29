@@ -1,9 +1,7 @@
 from enum import Enum
 from random import Random
 
-RoleAssignmentStrategy = Enum(
-    "RoleAssignmentStrategy", ["first", "second", "random", "random_deterministic"]
-)
+RoleAssignmentStrategy = Enum("RoleAssignmentStrategy", ["first", "second", "random"])
 RoleType = Enum("RoleType", ["DialogueSystem", "Analysis"])
 
 

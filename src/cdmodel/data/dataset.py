@@ -9,9 +9,13 @@ from torch import Tensor
 from torch.utils.data import Dataset
 
 from cdmodel.common import ConversationData
-from cdmodel.common.role_assignment import (AnalysisRole, DialogueSystemRole,
-                                            RoleAssignmentStrategy, RoleType,
-                                            assign_speaker_roles)
+from cdmodel.common.role_assignment import (
+    AnalysisRole,
+    DialogueSystemRole,
+    RoleAssignmentStrategy,
+    RoleType,
+    assign_speaker_roles,
+)
 
 
 def load_set_ids(dataset_dir: str, dataset_subset: str, set: str) -> list[int]:
@@ -29,6 +33,7 @@ class ConversationDataset(Dataset):
         set: str,
         role_type: RoleType,
         role_assignment_strategy: RoleAssignmentStrategy,
+        deterministic: bool = True,
     ):
         super().__init__()
 
@@ -48,6 +53,7 @@ class ConversationDataset(Dataset):
         self.role_assignment_strategy: Final[RoleAssignmentStrategy] = (
             role_assignment_strategy
         )
+        self.deterministic: Final[bool] = deterministic
         self.random = Random()
 
     def __len__(self) -> int:
@@ -63,7 +69,7 @@ class ConversationDataset(Dataset):
             [conv_data[feature] for feature in self.segment_features]
         ).swapaxes(0, 1)
         segment_features_delta = segment_features.diff(
-            dim=1, prepend=torch.zeros(1, 1, segment_features.shape[2])
+            dim=0, prepend=torch.zeros(1, segment_features.shape[1])
         )
 
         embeddings: Tensor = torch.load(
@@ -83,27 +89,27 @@ class ConversationDataset(Dataset):
         )
 
         # Establish speaker roles
-        if self.role_assignment_strategy == RoleAssignmentStrategy.random_deterministic:
+        if self.deterministic:
             self.random.seed(conv_id)
-        speaker_role: Final[list[DialogueSystemRole] | list[AnalysisRole]] = (
-            assign_speaker_roles(
-                speaker_ids=speaker_id,
-                role_type=self.role_type,
-                role_assignment_strategy=self.role_assignment_strategy,
-                random=self.random,
-            )
+        speaker_role: Final[
+            list[list[DialogueSystemRole]] | list[list[AnalysisRole]]
+        ] = assign_speaker_roles(
+            speaker_ids=speaker_id,
+            role_type=self.role_type,
+            role_assignment_strategy=self.role_assignment_strategy,
+            random=self.random,
         )
-        speaker_role_idx = torch.tensor([x.value for x in speaker_role])
+        speaker_role_idx = torch.tensor([x.value for x in speaker_role[0]])
 
         return ConversationData(
             conv_id=[conv_id],
-            segment_features=segment_features,
-            segment_features_delta=segment_features_delta,
+            segment_features=segment_features.unsqueeze(0),
+            segment_features_delta=segment_features_delta.unsqueeze(0),
             embeddings=embeddings,
             embeddings_segment_len=embeddings_turn_len,
             num_segments=[segment_features.shape[1]],
-            speaker_id=speaker_id,
-            speaker_id_idx=speaker_id_idx,
+            speaker_id=[speaker_id],
+            speaker_id_idx=speaker_id_idx.unsqueeze(0),
             speaker_role=speaker_role,
-            speaker_role_idx=speaker_role_idx,
+            speaker_role_idx=speaker_role_idx.unsqueeze(0),
         )

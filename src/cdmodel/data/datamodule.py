@@ -3,6 +3,7 @@ from typing import Final
 from lightning import LightningDataModule
 from torch.utils.data import DataLoader
 
+from cdmodel.common.role_assignment import RoleAssignmentStrategy, RoleType
 from cdmodel.data.collate_fn import collate_fn
 from cdmodel.data.dataset import ConversationDataset
 
@@ -16,6 +17,8 @@ class ConversationDataModule(LightningDataModule):
         zero_pad: bool,
         batch_size: int,
         num_workers: int,
+        role_type: RoleType,
+        role_assignment_strategy: RoleAssignmentStrategy,
     ):
         super().__init__()
 
@@ -25,6 +28,10 @@ class ConversationDataModule(LightningDataModule):
         self.zero_pad: Final[bool] = zero_pad
         self.batch_size: Final[int] = batch_size
         self.num_workers: Final[int] = num_workers
+        self.role_type: Final[RoleType] = role_type
+        self.role_assignment_strategy: Final[RoleAssignmentStrategy] = (
+            role_assignment_strategy
+        )
 
     def prepare_data(self) -> None:
         pass
@@ -38,6 +45,9 @@ class ConversationDataModule(LightningDataModule):
                     zero_pad=self.zero_pad,
                     subset=self.data_subset,
                     set="train",
+                    role_type=self.role_type,
+                    role_assignment_strategy=self.role_assignment_strategy,
+                    deterministic=False,
                 )
                 self.dataset_validate = ConversationDataset(
                     dataset_dir=self.dataset_dir,
@@ -45,6 +55,9 @@ class ConversationDataModule(LightningDataModule):
                     zero_pad=self.zero_pad,
                     subset=self.data_subset,
                     set="val",
+                    role_type=self.role_type,
+                    role_assignment_strategy=self.role_assignment_strategy,
+                    deterministic=True,
                 )
             case "validate":
                 self.dataset_validate = ConversationDataset(
@@ -53,6 +66,9 @@ class ConversationDataModule(LightningDataModule):
                     zero_pad=self.zero_pad,
                     subset=self.data_subset,
                     set="val",
+                    role_type=self.role_type,
+                    role_assignment_strategy=self.role_assignment_strategy,
+                    deterministic=True,
                 )
             case "test":
                 self.dataset_test = ConversationDataset(
@@ -61,6 +77,9 @@ class ConversationDataModule(LightningDataModule):
                     zero_pad=self.zero_pad,
                     subset=self.data_subset,
                     set="test",
+                    role_type=self.role_type,
+                    role_assignment_strategy=self.role_assignment_strategy,
+                    deterministic=True,
                 )
             case "predict":
                 self.dataset_predict = ConversationDataset(
@@ -69,6 +88,9 @@ class ConversationDataModule(LightningDataModule):
                     zero_pad=self.zero_pad,
                     subset=self.data_subset,
                     set="test",
+                    role_type=self.role_type,
+                    role_assignment_strategy=self.role_assignment_strategy,
+                    deterministic=True,
                 )
 
     def train_dataloader(self) -> DataLoader:
