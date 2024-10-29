@@ -107,7 +107,7 @@ class ConversationDataset(Dataset):
             segment_features_delta=segment_features_delta.unsqueeze(0),
             embeddings=embeddings,
             embeddings_segment_len=embeddings_turn_len,
-            num_segments=[segment_features.shape[1]],
+            num_segments=[segment_features.shape[0]],
             speaker_id=[speaker_id],
             speaker_id_idx=speaker_id_idx.unsqueeze(0),
             speaker_role=speaker_role,
