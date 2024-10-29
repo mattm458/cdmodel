@@ -48,9 +48,12 @@ class CDModel(pl.LightningModule):
         num_decoders: int,
         speaker_role_encoding: SpeakerRoleEncoding,
         role_type: RoleType,
+        lr: float,
     ):
         super().__init__()
         self.save_hyperparameters()
+
+        self.lr: Final[float] = lr
 
         self.feature_names: Final[list[str]] = feature_names
         self.num_features: Final[int] = len(feature_names)
@@ -395,7 +398,7 @@ class CDModel(pl.LightningModule):
         )
 
     def configure_optimizers(self):
-        return None
+        return torch.optim.AdamW(self.parameters(), lr=self.lr)
 
     def training_step(self, batch, batch_idx: int):
         pass
