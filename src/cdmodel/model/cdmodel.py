@@ -127,6 +127,11 @@ class CDModel(pl.LightningModule):
         att_context_dim: Final[int] = (
             embedding_encoder_att_dim  # The encoded representation of the upcoming segment transcript
             + (decoder_hidden_dim * decoder_num_layers)  # The decoder hidden state
+            + (
+                ext_ist_token_dim
+                if ext_ist_enabled and ext_ist_token_dim is not None
+                else 0
+            )  # IST token dimensions if active
         )
 
         # Initialize the attention mechanisms
@@ -246,7 +251,10 @@ class CDModel(pl.LightningModule):
                 torch.rand(ext_ist_token_count, ext_ist_token_dim)
             )
             self.ist_encoder = nn.GRU(
-                self.num_features, ext_ist_encoder_dim, bidirectional=True
+                self.num_features,
+                ext_ist_encoder_dim,
+                bidirectional=True,
+                batch_first=True,
             )
             self.ist_linear = nn.Sequential(
                 nn.Linear(ext_ist_encoder_dim * 2, ext_ist_encoder_dim),
@@ -329,6 +337,20 @@ class CDModel(pl.LightningModule):
         partner_encoded_all: list[Tensor] = []
         partner_identity_pred_all: list[Tensor] = []
 
+        # IST Tokens
+        ist_embedding: Tensor | None = None
+        if (
+            self.ist_tokens is not None
+            and self.ist_encoder is not None
+            and self.ist_linear is not None
+        ):
+            _, ist_h = self.ist_encoder(segment_features_delta)
+            ist_h = ist_h.reshape(batch_size, -1)
+            ist_weights = self.ist_linear(ist_h)
+            ist_embedding = torch.tensordot(
+                ist_weights.unsqueeze(2), self.ist_tokens.unsqueeze(0)
+            )
+
         # Iterate through the conversation
         for i in range(num_segments - 1):
             predict_cat.append(prev_predict.unsqueeze(1))
@@ -403,6 +425,8 @@ class CDModel(pl.LightningModule):
                 )
             ):
                 attention_context = h + [embeddings_encoded_segmented[i + 1]]
+                if ist_embedding is not None:
+                    attention_context.append(ist_embedding)
 
                 history_encoded, att_scores = attention(
                     history,
