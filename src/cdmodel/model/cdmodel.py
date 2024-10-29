@@ -26,12 +26,14 @@ class CDModelOutput(NamedTuple):
     predict_next: Tensor
 
 
+# TODO: Should these be moved to a common source file?
 CDPredictionStrategy = Enum("CDPredictionStrategy", ["both", "agent"])
 SpeakerRoleEncoding = Enum("SpeakerRoleEncoding", ["one_hot"])
 CDAttentionStyle = Enum("CDAttentionStyle", ["dual", "single_both", "single_partner"])
 
 
 class CDModel(pl.LightningModule):
+    # TODO: Should enum arguments should be strings, which are then cast to the enum?
     def __init__(
         self,
         feature_names: list[str],
@@ -53,6 +55,7 @@ class CDModel(pl.LightningModule):
         speaker_role_encoding: SpeakerRoleEncoding,
         role_type: RoleType,
         lr: float,
+        # TODO: Add configuration for conversation style tokens
     ):
         super().__init__()
         self.save_hyperparameters()
@@ -157,6 +160,7 @@ class CDModel(pl.LightningModule):
                     for _ in range(num_decoders)
                 ]
             )
+        # TODO: Make None attention explicitly a CDAttentionStyle enum value
         elif attention_style is None:
             self.attentions = nn.ModuleList(
                 [NoopAttention() for _ in range(num_decoders)]
@@ -181,6 +185,7 @@ class CDModel(pl.LightningModule):
         elif num_decoders == len(feature_names):
             decoder_out_dim = 1
         else:
+            # TODO: Make this a more specific execption type
             raise Exception(
                 f"Configuration specifies {num_decoders} which cannot output {len(feature_names)} output features!"
             )
@@ -386,6 +391,7 @@ class CDModel(pl.LightningModule):
             if len(b_scores_cat) > 0:
                 b_scores_all.append(torch.cat(b_scores_cat, dim=1))
             else:
+                # TODO: Clarify what happens heres
                 raise Exception("UH OH")
             if len(combined_scores_cat) > 0:
                 combined_scores_all.append(torch.cat(combined_scores_cat, dim=1))
@@ -491,3 +497,5 @@ class CDModel(pl.LightningModule):
             speaker_role_idx=batch.speaker_role_idx,
             autoregressive=True,
         )
+
+    # TODO: Does the model need a test_step?
