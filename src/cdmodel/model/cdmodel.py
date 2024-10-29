@@ -5,7 +5,17 @@ import torch
 from lightning import pytorch as pl
 from torch import Tensor, nn
 
-from cdmodel.model.components import EmbeddingEncoder
+from cdmodel.common.role_assignment import DialogueSystemRole, RoleType
+from cdmodel.model.components import (
+    Decoder,
+    DualAttention,
+    EmbeddingEncoder,
+    Encoder,
+    NoopAttention,
+    SingleAttention,
+    SinglePartnerAttention,
+)
+from cdmodel.model.util import one_hot_drop_0, timestep_split
 
 
 class CDModelOutput(NamedTuple):
