@@ -6,6 +6,7 @@ from lightning import pytorch as pl
 from torch import Tensor, nn
 from torch.nn import functional as F
 
+from cdmodel.common.data import ConversationData
 from cdmodel.common.role_assignment import DialogueSystemRole, RoleType
 from cdmodel.model.components import (
     Decoder,
@@ -405,15 +406,15 @@ class CDModel(pl.LightningModule):
     def configure_optimizers(self) -> torch.optim.Optimizer:
         return torch.optim.AdamW(self.parameters(), lr=self.lr)
 
-    def training_step(self, batch: CDModelOutput, batch_idx: int) -> Tensor:
+    def training_step(self, batch: ConversationData, batch_idx: int) -> Tensor:
         results = self(
-            segment_features=x.segment_features,
-            segment_features_delta=x.segment_features_delta,
-            embeddings=x.embeddings,
-            embeddings_len=x.embeddings_segment_len,
-            conv_len=x.num_segments,
-            speaker_id_idx=x.speaker_id_idx,
-            speaker_role_idx=x.speaker_role_idx,
+            segment_features=batch.segment_features,
+            segment_features_delta=batch.segment_features_delta,
+            embeddings=batch.embeddings,
+            embeddings_len=batch.embeddings_segment_len,
+            conv_len=batch.num_segments,
+            speaker_id_idx=batch.speaker_id_idx,
+            speaker_role_idx=batch.speaker_role_idx,
             autoregressive=True,
         )
 
@@ -439,15 +440,15 @@ class CDModel(pl.LightningModule):
 
         return loss
 
-    def validation_step(self, batch: CDModelOutput, batch_idx: int) -> Tensor:
+    def validation_step(self, batch: ConversationData, batch_idx: int) -> Tensor:
         results = self(
-            segment_features=x.segment_features,
-            segment_features_delta=x.segment_features_delta,
-            embeddings=x.embeddings,
-            embeddings_len=x.embeddings_segment_len,
-            conv_len=x.num_segments,
-            speaker_id_idx=x.speaker_id_idx,
-            speaker_role_idx=x.speaker_role_idx,
+            segment_features=batch.segment_features,
+            segment_features_delta=batch.segment_features_delta,
+            embeddings=batch.embeddings,
+            embeddings_len=batch.embeddings_segment_len,
+            conv_len=batch.num_segments,
+            speaker_id_idx=batch.speaker_id_idx,
+            speaker_role_idx=batch.speaker_role_idx,
             autoregressive=True,
         )
 
@@ -479,14 +480,14 @@ class CDModel(pl.LightningModule):
 
         return loss
 
-    def predict_step(self, batch: CDModelOutput, batch_idx: int):
+    def predict_step(self, batch: ConversationData, batch_idx: int):
         return self(
-            segment_features=x.segment_features,
-            segment_features_delta=x.segment_features_delta,
-            embeddings=x.embeddings,
-            embeddings_len=x.embeddings_segment_len,
-            conv_len=x.num_segments,
-            speaker_id_idx=x.speaker_id_idx,
-            speaker_role_idx=x.speaker_role_idx,
+            segment_features=batch.segment_features,
+            segment_features_delta=batch.segment_features_delta,
+            embeddings=batch.embeddings,
+            embeddings_len=batch.embeddings_segment_len,
+            conv_len=batch.num_segments,
+            speaker_id_idx=batch.speaker_id_idx,
+            speaker_role_idx=batch.speaker_role_idx,
             autoregressive=True,
         )
