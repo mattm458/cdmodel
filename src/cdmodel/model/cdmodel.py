@@ -24,6 +24,8 @@ class CDModelOutput(NamedTuple):
     predicted_segment_features: Tensor
     # TODO: predict_next should come from the DataLoader now
     predict_next: Tensor
+    ist_weights: Tensor | None
+    ist_embeddings: Tensor | None
 
 
 # TODO: Should these be moved to a common source file?
@@ -338,7 +340,8 @@ class CDModel(pl.LightningModule):
         partner_identity_pred_all: list[Tensor] = []
 
         # IST Tokens
-        ist_embedding: Tensor | None = None
+        ist_embeddings: Tensor | None = None
+        ist_weights: Tensor | None = None
         if (
             self.ist_tokens is not None
             and self.ist_encoder is not None
@@ -347,7 +350,8 @@ class CDModel(pl.LightningModule):
             _, ist_h = self.ist_encoder(segment_features_delta)
             ist_h = ist_h.reshape(batch_size, -1)
             ist_weights = self.ist_linear(ist_h)
-            ist_embedding = torch.tensordot(
+            # TODO: Fix this mypy issue
+            ist_embeddings = torch.tensordot(
                 ist_weights.unsqueeze(2), self.ist_tokens.unsqueeze(0)
             )
 
@@ -425,8 +429,8 @@ class CDModel(pl.LightningModule):
                 )
             ):
                 attention_context = h + [embeddings_encoded_segmented[i + 1]]
-                if ist_embedding is not None:
-                    attention_context.append(ist_embedding)
+                if ist_embeddings is not None:
+                    attention_context.append(ist_embeddings)
 
                 history_encoded, att_scores = attention(
                     history,
@@ -485,6 +489,8 @@ class CDModel(pl.LightningModule):
         return CDModelOutput(
             predicted_segment_features=torch.cat(decoded_all_cat, dim=1),
             predict_next=predict_next,
+            ist_embeddings=ist_embeddings,
+            ist_weights=ist_weights,
         )
 
     def configure_optimizers(self) -> torch.optim.Optimizer:
@@ -561,6 +567,9 @@ class CDModel(pl.LightningModule):
                 on_epoch=True,
                 on_step=False,
             )
+
+        if batch_idx == 0:
+            print(results.ist_weights[0])
 
         return loss
 
