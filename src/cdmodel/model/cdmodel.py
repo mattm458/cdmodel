@@ -4,6 +4,7 @@ from typing import Final, NamedTuple
 import torch
 from lightning import pytorch as pl
 from torch import Tensor, nn
+from torch.nn import functional as F
 
 from cdmodel.common.role_assignment import DialogueSystemRole, RoleType
 from cdmodel.model.components import (
@@ -20,6 +21,8 @@ from cdmodel.model.util import one_hot_drop_0, timestep_split
 
 class CDModelOutput(NamedTuple):
     predicted_segment_features: Tensor
+    # TODO: predict_next should come from the DataLoader now
+    predict_next: Tensor
 
 
 CDPredictionStrategy = Enum("CDPredictionStrategy", ["both", "agent"])
@@ -198,6 +201,7 @@ class CDModel(pl.LightningModule):
     def forward(
         self,
         segment_features: Tensor,
+        segment_features_delta: Tensor,
         embeddings: Tensor,
         embeddings_len: Tensor,
         conv_len: list[int],
@@ -394,17 +398,95 @@ class CDModel(pl.LightningModule):
         predict_cat.append(prev_predict.unsqueeze(1))
 
         return CDModelOutput(
-            predicted_segment_features=torch.cat(decoded_all_cat, dim=1)
+            predicted_segment_features=torch.cat(decoded_all_cat, dim=1),
+            predict_next=predict_next,
         )
 
-    def configure_optimizers(self):
+    def configure_optimizers(self) -> torch.optim.Optimizer:
         return torch.optim.AdamW(self.parameters(), lr=self.lr)
 
-    def training_step(self, batch, batch_idx: int):
-        pass
+    def training_step(self, batch: CDModelOutput, batch_idx: int) -> Tensor:
+        results = self(
+            segment_features=x.segment_features,
+            segment_features_delta=x.segment_features_delta,
+            embeddings=x.embeddings,
+            embeddings_len=x.embeddings_segment_len,
+            conv_len=x.num_segments,
+            speaker_id_idx=x.speaker_id_idx,
+            speaker_role_idx=x.speaker_role_idx,
+            autoregressive=True,
+        )
 
-    def validation_step(self, batch, batch_idx: int):
-        pass
+        y = batch.segment_features[:, 1:]
+        loss = F.mse_loss(
+            results.predicted_segment_features[results.predict_next],
+            y[results.predict_next],
+        )
 
-    def test_step(self, batch, batch_idx: int):
-        pass
+        self.log("training_loss", loss.detach(), on_epoch=True, on_step=True)
+        for feature_idx, feature_name in enumerate(self.feature_names):
+            self.log(
+                f"training_loss_l1_{feature_name}",
+                F.smooth_l1_loss(
+                    results.predicted_segment_features[results.predict_next][
+                        :, feature_idx
+                    ],
+                    y[results.predict_next][:, feature_idx],
+                ).detach(),
+                on_epoch=True,
+                on_step=True,
+            )
+
+        return loss
+
+    def validation_step(self, batch: CDModelOutput, batch_idx: int) -> Tensor:
+        results = self(
+            segment_features=x.segment_features,
+            segment_features_delta=x.segment_features_delta,
+            embeddings=x.embeddings,
+            embeddings_len=x.embeddings_segment_len,
+            conv_len=x.num_segments,
+            speaker_id_idx=x.speaker_id_idx,
+            speaker_role_idx=x.speaker_role_idx,
+            autoregressive=True,
+        )
+
+        y = batch.segment_features[:, 1:]
+        loss = F.mse_loss(
+            results.predicted_segment_features[results.predict_next],
+            y[results.predict_next],
+        )
+        loss_l1 = F.smooth_l1_loss(
+            results.predicted_segment_features[results.predict_next],
+            y[results.predict_next],
+        )
+
+        self.log("validation_loss", loss, on_epoch=True, on_step=False)
+        self.log("validation_loss_l1", loss_l1, on_epoch=True, on_step=False)
+
+        for feature_idx, feature_name in enumerate(self.feature_names):
+            self.log(
+                f"validation_loss_l1_{feature_name}",
+                F.smooth_l1_loss(
+                    results.predicted_segment_features[results.predict_next][
+                        :, feature_idx
+                    ],
+                    y[results.predict_next][:, feature_idx],
+                ),
+                on_epoch=True,
+                on_step=False,
+            )
+
+        return loss
+
+    def predict_step(self, batch: CDModelOutput, batch_idx: int):
+        return self(
+            segment_features=x.segment_features,
+            segment_features_delta=x.segment_features_delta,
+            embeddings=x.embeddings,
+            embeddings_len=x.embeddings_segment_len,
+            conv_len=x.num_segments,
+            speaker_id_idx=x.speaker_id_idx,
+            speaker_role_idx=x.speaker_role_idx,
+            autoregressive=True,
+        )
