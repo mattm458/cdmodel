@@ -1,13 +1,12 @@
 # main.py
 from lightning.pytorch.cli import LightningCLI
 
-# simple demo classes for your convenience
-from cdmodel.model import ExampleModel
 from cdmodel.data import ConversationDataModule
+from cdmodel.model import CDModel
 
 
 def cli_main():
-    cli = LightningCLI(ExampleModel, ConversationDataModule)
+    cli = LightningCLI(CDModel, ConversationDataModule)
 
 
 if __name__ == "__main__":

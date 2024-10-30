@@ -1,0 +1,53 @@
+{
+    "model": {
+        "embedding_dim": 50,
+        "embedding_encoder_out_dim": 32,
+        "embedding_encoder_num_layers": 2,
+        "embedding_encoder_dropout": 0.0,
+        "embedding_encoder_att_dim": 32,
+        "encoder_hidden_dim": 32,
+        "encoder_num_layers": 2,
+        "encoder_dropout": 0.0,
+        "decoder_att_dim": 32,
+        "decoder_hidden_dim": 32,
+        "decoder_num_layers": 2,
+        "decoder_dropout": 0.0,
+        "num_decoders": 1,
+        "prediction_strategy": "agent",
+        "lr": 0.0005,
+        "attention_style": "single_partner",
+        "feature_names": [
+            "pitch_mean_norm_by_conv_speaker",
+            "pitch_range_norm_by_conv_speaker",
+            "intensity_mean_vcd_norm_by_conv_speaker",
+            "jitter_norm_by_conv_speaker",
+            "shimmer_norm_by_conv_speaker",
+            "nhr_vcd_norm_by_conv_speaker",
+            "rate_norm_by_conv_speaker"
+        ],
+        "speaker_role_encoding": "one_hot",
+        "role_type": "DialogueSystem",
+        "ext_ist_enabled": true,
+        "ext_ist_token_count": 10,
+        "ext_ist_token_dim": 128,
+        "ext_ist_encoder_dim": 128
+    },
+    "data": {
+        "dataset_dir": "../conversational-dynamics-modeling/preprocessed/fisher/",
+        "data_subset": "all",
+        "segment_features": [
+            "pitch_mean_norm_by_conv_speaker",
+            "pitch_range_norm_by_conv_speaker",
+            "intensity_mean_vcd_norm_by_conv_speaker",
+            "jitter_norm_by_conv_speaker",
+            "shimmer_norm_by_conv_speaker",
+            "nhr_vcd_norm_by_conv_speaker",
+            "rate_norm_by_conv_speaker"
+        ],
+        "zero_pad": false,
+        "role_assignment_strategy": "first",
+        "role_type": "DialogueSystem",
+        "batch_size": 32,
+        "num_workers": 4
+    }
+}

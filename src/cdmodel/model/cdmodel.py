@@ -6,7 +6,7 @@ from lightning import pytorch as pl
 from torch import Tensor, nn
 from torch.nn import functional as F
 
-from cdmodel.common.data import ConversationData
+from cdmodel.common.data import ConversationData, Role
 from cdmodel.common.role_assignment import DialogueSystemRole, RoleType
 from cdmodel.model.components import (
     Decoder,
@@ -39,7 +39,7 @@ class CDModel(pl.LightningModule):
     def __init__(
         self,
         feature_names: list[str],
-        prediction_strategy: CDPredictionStrategy,
+        prediction_strategy: str,
         embedding_dim: int,
         embedding_encoder_out_dim: int,
         embedding_encoder_num_layers: int,
@@ -52,10 +52,10 @@ class CDModel(pl.LightningModule):
         decoder_hidden_dim: int,
         decoder_num_layers: int,
         decoder_dropout: float,
-        attention_style: CDAttentionStyle,
+        attention_style: str,
         num_decoders: int,
-        speaker_role_encoding: SpeakerRoleEncoding,
-        role_type: RoleType,
+        speaker_role_encoding: str,
+        role_type: str,
         lr: float,
         ext_ist_enabled: bool,  # Whether to enable ISTs (see below)
         ext_ist_token_dim: Optional[int] = None,  # The dimensionality of each IST token
@@ -70,10 +70,20 @@ class CDModel(pl.LightningModule):
         self.feature_names: Final[list[str]] = feature_names
         self.num_features: Final[int] = len(feature_names)
 
-        self.speaker_role_encoding: Final[SpeakerRoleEncoding] = speaker_role_encoding
-
-        self.prediction_strategy: Final[CDPredictionStrategy] = prediction_strategy
-        self.role_type: Final[RoleType] = role_type
+        self.speaker_role_encoding: Final[SpeakerRoleEncoding] = SpeakerRoleEncoding[
+            speaker_role_encoding
+        ]
+        del speaker_role_encoding
+        self.prediction_strategy: Final[CDPredictionStrategy] = CDPredictionStrategy[
+            prediction_strategy
+        ]
+        del prediction_strategy
+        self.role_type: Final[RoleType] = RoleType[role_type]
+        del role_type
+        self.attention_style: Final[CDAttentionStyle] = CDAttentionStyle[
+            attention_style
+        ]
+        del attention_style
 
         # Embedding Encoder
         # =====================
@@ -123,7 +133,7 @@ class CDModel(pl.LightningModule):
         # Each attention mechanism outputs a tensor of the same size as a historical
         # timestep. Calculate the total output size depending on whether
         # we're using dual or single attention
-        att_multiplier: Final[int] = 2 if attention_style == "dual" else 1
+        att_multiplier: Final[int] = 2 if self.attention_style == "dual" else 1
         att_history_out_dim: Final[int] = history_dim * att_multiplier
 
         att_context_dim: Final[int] = (
@@ -137,7 +147,7 @@ class CDModel(pl.LightningModule):
         )
 
         # Initialize the attention mechanisms
-        if attention_style == CDAttentionStyle.dual:
+        if self.attention_style == CDAttentionStyle.dual:
             self.attentions = nn.ModuleList(
                 [
                     DualAttention(
@@ -148,7 +158,7 @@ class CDModel(pl.LightningModule):
                     for _ in range(num_decoders)
                 ]
             )
-        elif attention_style == CDAttentionStyle.single_both:
+        elif self.attention_style == CDAttentionStyle.single_both:
             self.attentions = nn.ModuleList(
                 [
                     SingleAttention(
@@ -159,7 +169,7 @@ class CDModel(pl.LightningModule):
                     for _ in range(num_decoders)
                 ]
             )
-        elif attention_style == CDAttentionStyle.single_partner:
+        elif self.attention_style == CDAttentionStyle.single_partner:
             self.attentions = nn.ModuleList(
                 [
                     SinglePartnerAttention(
@@ -171,12 +181,12 @@ class CDModel(pl.LightningModule):
                 ]
             )
         # TODO: Make None attention explicitly a CDAttentionStyle enum value
-        elif attention_style is None:
+        elif self.attention_style is None:
             self.attentions = nn.ModuleList(
                 [NoopAttention() for _ in range(num_decoders)]
             )
         else:
-            raise Exception(f"Unrecognized attention style '{attention_style}'")
+            raise Exception(f"Unrecognized attention style '{self.attention_style}'")
 
         # Decoders
         # =====================
@@ -238,11 +248,11 @@ class CDModel(pl.LightningModule):
         self.ist_encoder: nn.GRU | None = None
         self.ist_linear: nn.Sequential | None = None
         if ext_ist_enabled:
-            if role_type != RoleType.DialogueSystem:
+            if self.role_type != RoleType.DialogueSystem:
                 raise Exception(
                     "If ISTs are enabled, model must be in DialogueSystem mode"
                 )
-            if prediction_strategy != CDPredictionStrategy.agent:
+            if self.prediction_strategy != CDPredictionStrategy.agent:
                 raise Exception(
                     "If ISTs are enabled, model must be in agent prediction mode"
                 )
