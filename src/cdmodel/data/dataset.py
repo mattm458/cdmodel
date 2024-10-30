@@ -12,6 +12,7 @@ from cdmodel.common import ConversationData
 from cdmodel.common.role_assignment import (
     AnalysisRole,
     DialogueSystemRole,
+    Role,
     RoleAssignmentStrategy,
     RoleType,
     assign_speaker_roles,
@@ -101,15 +102,40 @@ class ConversationDataset(Dataset):
         )
         speaker_role_idx = torch.tensor([x.value for x in speaker_role[0]])
 
+        segment_features_delta_sides: dict[Role, Tensor] = {}
+        match self.role_type:
+            case RoleType.DialogueSystem:
+                segment_features_delta_sides[DialogueSystemRole.partner] = (
+                    segment_features_delta[
+                        speaker_role_idx == DialogueSystemRole.partner.value
+                    ].unsqueeze(0)
+                )
+                segment_features_delta_sides[DialogueSystemRole.agent] = (
+                    segment_features_delta[
+                        speaker_role_idx == DialogueSystemRole.agent.value
+                    ].unsqueeze(0)
+                )
+            case RoleType.Analysis:
+                segment_features_delta_sides[AnalysisRole.a] = segment_features_delta[
+                    speaker_role_idx == AnalysisRole.a.value
+                ].unsqueeze(0)
+                segment_features_delta_sides[AnalysisRole.b] = segment_features_delta[
+                    speaker_role_idx == AnalysisRole.b.value
+                ].unsqueeze(0)
+            case _:
+                raise Exception("Oh no")
+
         return ConversationData(
             conv_id=[conv_id],
             segment_features=segment_features.unsqueeze(0),
             segment_features_delta=segment_features_delta.unsqueeze(0),
+            segment_features_delta_sides=segment_features_delta_sides,
             embeddings=embeddings,
             embeddings_segment_len=embeddings_turn_len,
             num_segments=[segment_features.shape[0]],
             speaker_id=[speaker_id],
             speaker_id_idx=speaker_id_idx.unsqueeze(0),
+            # TODO: Fix this type error
             speaker_role=speaker_role,
             speaker_role_idx=speaker_role_idx.unsqueeze(0),
         )

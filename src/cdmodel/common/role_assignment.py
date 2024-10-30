@@ -2,6 +2,7 @@ from enum import Enum
 from random import Random
 
 RoleAssignmentStrategy = Enum("RoleAssignmentStrategy", ["first", "second", "random"])
+# TODO lowercase these enum labels
 RoleType = Enum("RoleType", ["DialogueSystem", "Analysis"])
 
 

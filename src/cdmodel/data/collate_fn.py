@@ -1,3 +1,4 @@
+from collections import defaultdict
 from typing import Final
 
 import torch
@@ -19,6 +20,9 @@ def collate_fn(batches: list[ConversationData]) -> ConversationData:
     speaker_id_idx_all: Final[list[Tensor]] = []
     speaker_role_all: Final[list[list[Role]]] = []
     speaker_role_idx_all: Final[list[Tensor]] = []
+    segment_features_delta_sides_all: Final[defaultdict[Role, list[Tensor]]] = (
+        defaultdict(list)
+    )
 
     # For padding embedding segments
     longest_embedding_segment: int = 0
@@ -39,6 +43,9 @@ def collate_fn(batches: list[ConversationData]) -> ConversationData:
         if longest_embedding_segment < max_embeddings_len:
             longest_embedding_segment = max_embeddings_len
 
+        for role, t in batch.segment_features_delta_sides.items():
+            segment_features_delta_sides_all[role].append(t.squeeze(0))
+
     conv_id: Final[list[int]] = conv_id_all
 
     segment_features: Final[Tensor] = nn.utils.rnn.pad_sequence(
@@ -48,6 +55,12 @@ def collate_fn(batches: list[ConversationData]) -> ConversationData:
     segment_features_delta: Final[Tensor] = nn.utils.rnn.pad_sequence(
         segment_features_delta_all, batch_first=True
     )
+
+    segment_features_delta_sides: Final[dict[Role, Tensor]] = {}
+    for role, t_list in segment_features_delta_sides_all.items():
+        segment_features_delta_sides[role] = nn.utils.rnn.pad_sequence(
+            t_list, batch_first=True
+        )
 
     # Embeddings are stored in a 3-dimensional tensor with the following dimensions:
     #
@@ -85,6 +98,7 @@ def collate_fn(batches: list[ConversationData]) -> ConversationData:
         conv_id=conv_id,
         segment_features=segment_features,
         segment_features_delta=segment_features_delta,
+        segment_features_delta_sides=segment_features_delta_sides,
         embeddings=embeddings,
         embeddings_segment_len=embeddings_segment_len,
         num_segments=num_segments,
