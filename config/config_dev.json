@@ -14,7 +14,7 @@
         "decoder_dropout": 0.0,
         "num_decoders": 1,
         "prediction_strategy": "agent",
-        "lr": 0.0005,
+        "lr": 0.002,
         "attention_style": "single_partner",
         "feature_names": [
             "pitch_mean_norm_by_conv_speaker",
@@ -47,7 +47,10 @@
         "zero_pad": false,
         "role_assignment_strategy": "first",
         "role_type": "DialogueSystem",
-        "batch_size": 32,
+        "batch_size": 128,
         "num_workers": 4
+    },
+    "trainer": {
+        "precision": "16-mixed"
     }
 }

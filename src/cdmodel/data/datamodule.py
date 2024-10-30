@@ -17,8 +17,8 @@ class ConversationDataModule(LightningDataModule):
         zero_pad: bool,
         batch_size: int,
         num_workers: int,
-        role_type: RoleType,
-        role_assignment_strategy: RoleAssignmentStrategy,
+        role_type: str,
+        role_assignment_strategy: str,
     ):
         super().__init__()
 
@@ -28,9 +28,9 @@ class ConversationDataModule(LightningDataModule):
         self.zero_pad: Final[bool] = zero_pad
         self.batch_size: Final[int] = batch_size
         self.num_workers: Final[int] = num_workers
-        self.role_type: Final[RoleType] = role_type
+        self.role_type: Final[RoleType] = RoleType[role_type]
         self.role_assignment_strategy: Final[RoleAssignmentStrategy] = (
-            role_assignment_strategy
+            RoleAssignmentStrategy[role_assignment_strategy]
         )
 
     def prepare_data(self) -> None:

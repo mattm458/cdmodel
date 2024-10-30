@@ -268,7 +268,7 @@ class CDModel(pl.LightningModule):
                 )
 
             self.ist_tokens = nn.Parameter(
-                torch.rand(ext_ist_token_count, ext_ist_token_dim)
+                torch.rand(ext_ist_token_count, ext_ist_token_dim), requires_grad=True
             )
             self.ist_encoder = nn.GRU(
                 self.num_features,
@@ -282,7 +282,7 @@ class CDModel(pl.LightningModule):
                 nn.Linear(ext_ist_encoder_dim, ext_ist_encoder_dim // 2),
                 nn.ELU(),
                 nn.Linear(ext_ist_encoder_dim // 2, ext_ist_token_count),
-                nn.Sigmoid(),
+                nn.Softmax(-1),
             )
 
     # TODO: Keep the input parameters cleaned up
@@ -372,7 +372,7 @@ class CDModel(pl.LightningModule):
             ist_weights = self.ist_linear(ist_h)
             # TODO: Fix this mypy issue
             ist_embeddings = F.tanh(
-                torch.tensordot(ist_weights.unsqueeze(2), self.ist_tokens.unsqueeze(0))
+                (ist_weights.unsqueeze(2) * F.tanh(self.ist_tokens).unsqueeze(0)).sum(1)
             )
 
         # Iterate through the conversation
@@ -534,7 +534,9 @@ class CDModel(pl.LightningModule):
             y[results.predict_next],
         )
 
-        self.log("training_loss", loss.detach(), on_epoch=True, on_step=True)
+        self.log(
+            "training_loss", loss.detach(), on_epoch=True, on_step=True, sync_dist=True
+        )
         for feature_idx, feature_name in enumerate(self.feature_names):
             self.log(
                 f"training_loss_l1_{feature_name}",
@@ -546,6 +548,7 @@ class CDModel(pl.LightningModule):
                 ).detach(),
                 on_epoch=True,
                 on_step=True,
+                sync_dist=True,
             )
 
         return loss
@@ -572,8 +575,10 @@ class CDModel(pl.LightningModule):
             y[results.predict_next],
         )
 
-        self.log("validation_loss", loss, on_epoch=True, on_step=False)
-        self.log("validation_loss_l1", loss_l1, on_epoch=True, on_step=False)
+        self.log("validation_loss", loss, on_epoch=True, on_step=False, sync_dist=True)
+        self.log(
+            "validation_loss_l1", loss_l1, on_epoch=True, on_step=False, sync_dist=True
+        )
 
         for feature_idx, feature_name in enumerate(self.feature_names):
             self.log(
@@ -586,6 +591,7 @@ class CDModel(pl.LightningModule):
                 ),
                 on_epoch=True,
                 on_step=False,
+                sync_dist=True,
             )
 
         if batch_idx == 0:
@@ -604,5 +610,17 @@ class CDModel(pl.LightningModule):
             speaker_role_idx=batch.speaker_role_idx,
             autoregressive=True,
         )
+
+    def on_validation_end(self):
+        if self.ist_tokens is not None:
+            self.logger.experiment.add_embedding(
+                self.ist_tokens, tag="ist_tokens", global_step=self.global_step
+            )
+
+    def on_train_epoch_end(self):
+        for name, parameter in self.named_parameters():
+            self.logger.experiment.add_histogram(
+                name, parameter, global_step=self.global_step
+            )
 
     # TODO: Does the model need a test_step?

@@ -32,8 +32,8 @@ class ConversationDataset(Dataset):
         zero_pad: bool,
         subset: str,
         set: str,
-        role_type: str,
-        role_assignment_strategy: str,
+        role_type: RoleType,
+        role_assignment_strategy: RoleAssignmentStrategy,
         deterministic: bool = True,
     ):
         super().__init__()
@@ -50,11 +50,10 @@ class ConversationDataset(Dataset):
             path.join(dataset_dir, f"speaker-ids-{subset}.csv"),
             index_col="speaker_id",
         )["idx"].to_dict()
-        self.role_type: Final[RoleType] = RoleType[role_type]
+        self.role_type: Final[RoleType] = role_type
         self.role_assignment_strategy: Final[RoleAssignmentStrategy] = (
-            RoleAssignmentStrategy[role_assignment_strategy]
+            role_assignment_strategy
         )
-
         self.deterministic: Final[bool] = deterministic
         self.random = Random()
 
@@ -136,7 +135,7 @@ class ConversationDataset(Dataset):
             num_segments=[segment_features.shape[0]],
             speaker_id=[speaker_id],
             speaker_id_idx=speaker_id_idx.unsqueeze(0),
-            # TODO: Fix this type error
+            # TODO: Fix this type
             speaker_role=speaker_role,
             speaker_role_idx=speaker_role_idx.unsqueeze(0),
         )
