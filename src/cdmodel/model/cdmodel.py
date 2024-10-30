@@ -227,17 +227,25 @@ class CDModel(pl.LightningModule):
         # not the decoder. The goal is to investigate whether different interaction styles can influence
         # which historical turns the model finds most useful.
         #
-        # Currently, our IST experiments are related to determining the interaction style of a speaker.
-        # That is, the interaction style embedding is meant to embody the "personality" of the person
-        # currently speaking. In the future, we may experimen with generating a separate token for the
-        # partner, both to influence the partner's personality when the model is in analytical mode,
-        # and to determine if the model can account for its partner's personality when predicting its own
-        # speech features.
+        # Currently, our IST experiments are related to determining the interaction style of an agent
+        # in a dialogue system configuration. That is, the interaction style embedding is meant to
+        # explain the "personality" of the agent. In the future, we may experimen with generating a
+        # separate token for the partner, both to influence the partner's personality when the model is
+        # in analytical mode, and to determine if the model can account for its partner's personality
+        # when predicting its own speech features.
         self.ext_ist_enabled: Final[bool] = ext_ist_enabled
         self.ist_tokens: nn.Parameter | None = None
         self.ist_encoder: nn.GRU | None = None
         self.ist_linear: nn.Sequential | None = None
         if ext_ist_enabled:
+            if role_type != RoleType.DialogueSystem:
+                raise Exception(
+                    "If ISTs are enabled, model must be in DialogueSystem mode"
+                )
+            if prediction_strategy != CDPredictionStrategy.agent:
+                raise Exception(
+                    "If ISTs are enabled, model must be in agent prediction mode"
+                )
             if ext_ist_token_count is None:
                 raise Exception(
                     "If ISTs are enabled, ext_ist_token_count cannot be None"
@@ -271,7 +279,7 @@ class CDModel(pl.LightningModule):
     def forward(
         self,
         segment_features: Tensor,
-        segment_features_delta: Tensor,
+        segment_features_delta_sides: dict[Role, Tensor],
         embeddings: Tensor,
         embeddings_len: Tensor,
         conv_len: list[int],
@@ -347,12 +355,14 @@ class CDModel(pl.LightningModule):
             and self.ist_encoder is not None
             and self.ist_linear is not None
         ):
-            _, ist_h = self.ist_encoder(segment_features_delta)
+            _, ist_h = self.ist_encoder(
+                segment_features_delta_sides[DialogueSystemRole.agent]
+            )
             ist_h = ist_h.reshape(batch_size, -1)
             ist_weights = self.ist_linear(ist_h)
             # TODO: Fix this mypy issue
-            ist_embeddings = torch.tensordot(
-                ist_weights.unsqueeze(2), self.ist_tokens.unsqueeze(0)
+            ist_embeddings = F.tanh(
+                torch.tensordot(ist_weights.unsqueeze(2), self.ist_tokens.unsqueeze(0))
             )
 
         # Iterate through the conversation
@@ -499,7 +509,7 @@ class CDModel(pl.LightningModule):
     def training_step(self, batch: ConversationData, batch_idx: int) -> Tensor:
         results = self(
             segment_features=batch.segment_features,
-            segment_features_delta=batch.segment_features_delta,
+            segment_features_delta_sides=batch.segment_features_delta_sides,
             embeddings=batch.embeddings,
             embeddings_len=batch.embeddings_segment_len,
             conv_len=batch.num_segments,
@@ -533,7 +543,7 @@ class CDModel(pl.LightningModule):
     def validation_step(self, batch: ConversationData, batch_idx: int) -> Tensor:
         results = self(
             segment_features=batch.segment_features,
-            segment_features_delta=batch.segment_features_delta,
+            segment_features_delta_sides=batch.segment_features_delta_sides,
             embeddings=batch.embeddings,
             embeddings_len=batch.embeddings_segment_len,
             conv_len=batch.num_segments,
@@ -576,7 +586,7 @@ class CDModel(pl.LightningModule):
     def predict_step(self, batch: ConversationData, batch_idx: int):
         return self(
             segment_features=batch.segment_features,
-            segment_features_delta=batch.segment_features_delta,
+            segment_features_delta_sides=batch.segment_features_delta_sides,
             embeddings=batch.embeddings,
             embeddings_len=batch.embeddings_segment_len,
             conv_len=batch.num_segments,
