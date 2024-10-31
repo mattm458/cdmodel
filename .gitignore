@@ -2,6 +2,7 @@
 
 # Custom ML project exclusions
 lightning_logs/
+results/
 *.ipynb
 *.csv
 
