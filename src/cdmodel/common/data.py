@@ -15,6 +15,7 @@ class ConversationData(NamedTuple):
     segment_features: Tensor
     segment_features_delta: Tensor
     segment_features_delta_sides: dict[Role, Tensor]
+    segment_features_delta_sides_len: dict[Role, list[int]]
 
     # Turn-level word embeddings
     embeddings: Tensor

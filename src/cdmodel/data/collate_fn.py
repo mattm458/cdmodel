@@ -23,6 +23,9 @@ def collate_fn(batches: list[ConversationData]) -> ConversationData:
     segment_features_delta_sides_all: Final[defaultdict[Role, list[Tensor]]] = (
         defaultdict(list)
     )
+    segment_features_delta_sides_len_all: Final[defaultdict[Role, list[int]]] = (
+        defaultdict(list)
+    )
 
     # For padding embedding segments
     longest_embedding_segment: int = 0
@@ -46,6 +49,9 @@ def collate_fn(batches: list[ConversationData]) -> ConversationData:
         for role, t in batch.segment_features_delta_sides.items():
             segment_features_delta_sides_all[role].append(t.squeeze(0))
 
+        for role, t_len in batch.segment_features_delta_sides_len.items():
+            segment_features_delta_sides_len_all[role].extend(t_len)
+
     conv_id: Final[list[int]] = conv_id_all
 
     segment_features: Final[Tensor] = nn.utils.rnn.pad_sequence(
@@ -61,6 +67,10 @@ def collate_fn(batches: list[ConversationData]) -> ConversationData:
         segment_features_delta_sides[role] = nn.utils.rnn.pad_sequence(
             t_list, batch_first=True
         )
+
+    segment_features_delta_sides_len: Final[dict[Role, list[int]]] = dict(
+        segment_features_delta_sides_len_all
+    )
 
     # Embeddings are stored in a 3-dimensional tensor with the following dimensions:
     #
@@ -99,6 +109,7 @@ def collate_fn(batches: list[ConversationData]) -> ConversationData:
         segment_features=segment_features,
         segment_features_delta=segment_features_delta,
         segment_features_delta_sides=segment_features_delta_sides,
+        segment_features_delta_sides_len=segment_features_delta_sides_len,
         embeddings=embeddings,
         embeddings_segment_len=embeddings_segment_len,
         num_segments=num_segments,
