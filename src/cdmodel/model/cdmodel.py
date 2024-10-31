@@ -1,3 +1,4 @@
+import math
 from enum import Enum
 from typing import Final, NamedTuple, Optional
 
@@ -20,10 +21,41 @@ from cdmodel.model.components import (
 from cdmodel.model.util import one_hot_drop_0, timestep_split
 
 
+def expand_cat(x: list[Tensor], dim: int = -1):
+    num_dims = None
+    max_len = -1
+    for t in x:
+        if num_dims is None:
+            num_dims = len(t.shape)
+        elif num_dims != len(t.shape):
+            raise Exception("Tensors in x are not of uniform dimensionality!")
+        if t.shape[dim] > max_len:
+            max_len = t.shape[dim]
+
+    if num_dims is None:
+        raise Exception("Cannot expand_cat an empty list!")
+
+    if dim == -1:
+        dim = num_dims - 1
+
+    padded: list[Tensor] = []
+    for t in x:
+        padding = [0, 0] * num_dims
+        padding[-((dim * 2) + 1)] = max_len - t.shape[dim]
+        p = F.pad(t, tuple(padding)).unsqueeze(dim)
+        padded.append(p)
+
+    return torch.cat(padded, dim=dim)
+
+
 class CDModelOutput(NamedTuple):
     predicted_segment_features: Tensor
     # TODO: predict_next should come from the DataLoader now
     predict_next: Tensor
+    a_scores: Tensor
+    b_scores: Tensor
+    a_mask: Tensor
+    b_mask: Tensor
     ist_weights: Tensor | None
     ist_embeddings: Tensor | None
 
@@ -32,6 +64,27 @@ class CDModelOutput(NamedTuple):
 CDPredictionStrategy = Enum("CDPredictionStrategy", ["both", "agent"])
 SpeakerRoleEncoding = Enum("SpeakerRoleEncoding", ["one_hot"])
 CDAttentionStyle = Enum("CDAttentionStyle", ["dual", "single_both", "single_partner"])
+
+
+def scaled_dot_product_attention(
+    query,
+    key,
+    value,
+    dropout_p=0.0,
+    scale=None,
+    enable_gqa=False,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    L, S = query.size(-2), key.size(-2)
+    scale_factor = 1 / math.sqrt(query.size(-1)) if scale is None else scale
+
+    if enable_gqa:
+        key = key.repeat_interleave(query.size(-3) // key.size(-3), -3)
+        value = value.repeat_interleave(query.size(-3) // value.size(-3), -3)
+
+    attn_weight = query @ key.transpose(-2, -1) * scale_factor
+    attn_weight = torch.softmax(attn_weight, dim=-1)
+    attn_weight = torch.dropout(attn_weight, dropout_p, train=True)
+    return attn_weight @ value, attn_weight
 
 
 class CDModel(pl.LightningModule):
@@ -197,6 +250,11 @@ class CDModel(pl.LightningModule):
             embedding_encoder_out_dim  # Size of the embedding encoder output for upcoming segment text
             + att_history_out_dim  # Size of the attention mechanism output for summarized historical segments
             + 2  # One-hot speaker role vector
+            # + (
+            #     ext_ist_token_dim
+            #     if ext_ist_enabled and ext_ist_token_dim is not None
+            #     else 0
+            # )  # IST token dimensions if active
         )
 
         # Initialize the decoders
@@ -268,7 +326,7 @@ class CDModel(pl.LightningModule):
                 )
 
             self.ist_tokens = nn.Parameter(
-                torch.rand(ext_ist_token_count, ext_ist_token_dim), requires_grad=True
+                torch.randn(ext_ist_token_count, ext_ist_token_dim), requires_grad=True
             )
             self.ist_encoder = nn.GRU(
                 self.num_features,
@@ -276,20 +334,18 @@ class CDModel(pl.LightningModule):
                 bidirectional=True,
                 batch_first=True,
             )
-            self.ist_linear = nn.Sequential(
-                nn.Linear(ext_ist_encoder_dim * 2, ext_ist_encoder_dim),
-                nn.ELU(),
-                nn.Linear(ext_ist_encoder_dim, ext_ist_encoder_dim // 2),
-                nn.ELU(),
-                nn.Linear(ext_ist_encoder_dim // 2, ext_ist_token_count),
-                nn.Softmax(-1),
+            self.ist_q = nn.Linear(
+                ext_ist_encoder_dim * 2, ext_ist_token_dim, bias=False
             )
+            self.ist_k = nn.Linear(ext_ist_token_dim, ext_ist_token_dim, bias=False)
+            self.ist_v = nn.Linear(ext_ist_token_dim, ext_ist_token_dim, bias=False)
 
     # TODO: Keep the input parameters cleaned up
     def forward(
         self,
         segment_features: Tensor,
         segment_features_delta_sides: dict[Role, Tensor],
+        segment_features_delta_sides_len: dict[Role, list[int]],
         embeddings: Tensor,
         embeddings_len: Tensor,
         conv_len: list[int],
@@ -363,17 +419,26 @@ class CDModel(pl.LightningModule):
         if (
             self.ist_tokens is not None
             and self.ist_encoder is not None
-            and self.ist_linear is not None
+            # and self.ist_linear is not None
         ):
-            _, ist_h = self.ist_encoder(
-                segment_features_delta_sides[DialogueSystemRole.agent]
+            ist_tokens = F.tanh(self.ist_tokens)
+            # print(segment_features_delta_sides[DialogueSystemRole.agent])
+            ist_in = nn.utils.rnn.pack_padded_sequence(
+                segment_features_delta_sides[DialogueSystemRole.agent],
+                segment_features_delta_sides_len[DialogueSystemRole.agent],
+                batch_first=True,
+                enforce_sorted=False,
             )
-            ist_h = ist_h.reshape(batch_size, -1)
-            ist_weights = self.ist_linear(ist_h)
-            # TODO: Fix this mypy issue
-            ist_embeddings = F.tanh(
-                (ist_weights.unsqueeze(2) * F.tanh(self.ist_tokens).unsqueeze(0)).sum(1)
+            _, ist_h = self.ist_encoder(ist_in)
+            ist_h = torch.cat([ist_h[0], ist_h[1]], -1)
+            ist_q = self.ist_q(ist_h).unsqueeze(1).unsqueeze(1)
+            ist_k = self.ist_k(ist_tokens).unsqueeze(0)
+            ist_v = self.ist_v(ist_tokens).unsqueeze(0)
+            ist_embeddings, ist_weights = scaled_dot_product_attention(
+                ist_q, ist_k, ist_v
             )
+            ist_embeddings = ist_embeddings.squeeze()
+            ist_weights = ist_weights.squeeze()
 
         # Iterate through the conversation
         for i in range(num_segments - 1):
@@ -473,6 +538,8 @@ class CDModel(pl.LightningModule):
                     embeddings_encoded_segmented[i + 1],
                     speaker_role_encoded_segmented[i + 1],
                 ]
+                # if ist_embeddings is not None:
+                #     decoder_in_arr.append(ist_embeddings)
                 decoder_in = torch.cat(decoder_in_arr, dim=-1)
 
                 decoder_out, h_out, decoder_high = decoder(decoder_in, h)
@@ -511,6 +578,14 @@ class CDModel(pl.LightningModule):
             predict_next=predict_next,
             ist_embeddings=ist_embeddings,
             ist_weights=ist_weights,
+            a_scores=(
+                expand_cat(a_scores_all, dim=-1) if len(a_scores_all) > 0 else None
+            ),
+            b_scores=(
+                expand_cat(b_scores_all, dim=-1) if len(b_scores_all) > 0 else None
+            ),
+            a_mask=expand_cat(a_mask_all, dim=-1),
+            b_mask=expand_cat(b_mask_all, dim=-1),
         )
 
     def configure_optimizers(self) -> torch.optim.Optimizer:
@@ -520,6 +595,7 @@ class CDModel(pl.LightningModule):
         results = self(
             segment_features=batch.segment_features,
             segment_features_delta_sides=batch.segment_features_delta_sides,
+            segment_features_delta_sides_len=batch.segment_features_delta_sides_len,
             embeddings=batch.embeddings,
             embeddings_len=batch.embeddings_segment_len,
             conv_len=batch.num_segments,
@@ -557,6 +633,7 @@ class CDModel(pl.LightningModule):
         results = self(
             segment_features=batch.segment_features,
             segment_features_delta_sides=batch.segment_features_delta_sides,
+            segment_features_delta_sides_len=batch.segment_features_delta_sides_len,
             embeddings=batch.embeddings,
             embeddings_len=batch.embeddings_segment_len,
             conv_len=batch.num_segments,
@@ -603,6 +680,7 @@ class CDModel(pl.LightningModule):
         return self(
             segment_features=batch.segment_features,
             segment_features_delta_sides=batch.segment_features_delta_sides,
+            segment_features_delta_sides_len=batch.segment_features_delta_sides_len,
             embeddings=batch.embeddings,
             embeddings_len=batch.embeddings_segment_len,
             conv_len=batch.num_segments,
@@ -610,12 +688,6 @@ class CDModel(pl.LightningModule):
             speaker_role_idx=batch.speaker_role_idx,
             autoregressive=True,
         )
-
-    def on_validation_end(self):
-        if self.ist_tokens is not None:
-            self.logger.experiment.add_embedding(
-                self.ist_tokens, tag="ist_tokens", global_step=self.global_step
-            )
 
     def on_train_epoch_end(self):
         for name, parameter in self.named_parameters():
