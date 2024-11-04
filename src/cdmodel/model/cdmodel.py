@@ -112,6 +112,8 @@ class CDModel(pl.LightningModule):
         lr: float,
         ext_ist_enabled: bool,  # Whether to enable ISTs (see below)
         ext_ist_decoder_in: bool,  # Whether to pass the IST into the decoder
+        ext_ist_objective_speaker_id: bool = False,  # Whether the IST token should be evaluated on its ability to predict the speaker ID during training
+        ext_ist_objective_speaker_gender: bool = False,  # Whether the IST token should be evaluated on its ability to predict the speaker gender during training
         ext_ist_token_dim: Optional[int] = None,  # The dimensionality of each IST token
         ext_ist_token_count: Optional[int] = None,  # The number of IST tokens
         ext_ist_encoder_dim: Optional[int] = None,  # The IST encoder output dimensions
@@ -306,6 +308,10 @@ class CDModel(pl.LightningModule):
         # when predicting its own speech features.
         self.ext_ist_enabled: Final[bool] = ext_ist_enabled
         self.ext_ist_decoder_in: Final[bool] = ext_ist_decoder_in
+        self.ext_ist: Final[bool] = ext_ist_objective_speaker_id
+        self.ext_ist_objective_speaker_gender: Final[bool] = (
+            ext_ist_objective_speaker_gender
+        )
         self.ist_tokens: nn.Parameter | None = None
         self.ist_encoder: nn.GRU | None = None
         self.ist_linear: nn.Sequential | None = None
