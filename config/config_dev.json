@@ -8,7 +8,7 @@
         "encoder_hidden_dim": 32,
         "encoder_num_layers": 2,
         "encoder_dropout": 0.0,
-        "decoder_att_dim": 32,
+        "decoder_att_dim": 192,
         "decoder_hidden_dim": 32,
         "decoder_num_layers": 2,
         "decoder_dropout": 0.0,
@@ -28,6 +28,7 @@
         "speaker_role_encoding": "one_hot",
         "role_type": "DialogueSystem",
         "ext_ist_enabled": true,
+        "ext_ist_decoder_in": false,
         "ext_ist_token_count": 10,
         "ext_ist_token_dim": 128,
         "ext_ist_encoder_dim": 128
@@ -51,6 +52,25 @@
         "num_workers": 4
     },
     "trainer": {
-        "precision": "16-mixed"
+        "precision": "16-mixed",
+        "callbacks": [
+            {
+                "class_path": "lightning.pytorch.callbacks.EarlyStopping",
+                "init_args": {
+                    "patience": 25,
+                    "monitor": "validation_loss",
+                    "mode": "min"
+                }
+            },
+            {
+                "class_path": "lightning.pytorch.callbacks.ModelCheckpoint",
+                "init_args": {
+                    "save_top_k": 5,
+                    "monitor": "validation_loss",
+                    "mode": "min",
+                    "filename": "checkpoint-{epoch}-{validation_loss:.5f}"
+                }
+            }
+        ]
     }
 }

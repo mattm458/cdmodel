@@ -111,6 +111,7 @@ class CDModel(pl.LightningModule):
         role_type: str,
         lr: float,
         ext_ist_enabled: bool,  # Whether to enable ISTs (see below)
+        ext_ist_decoder_in: bool,  # Whether to pass the IST into the decoder
         ext_ist_token_dim: Optional[int] = None,  # The dimensionality of each IST token
         ext_ist_token_count: Optional[int] = None,  # The number of IST tokens
         ext_ist_encoder_dim: Optional[int] = None,  # The IST encoder output dimensions
@@ -250,11 +251,13 @@ class CDModel(pl.LightningModule):
             embedding_encoder_out_dim  # Size of the embedding encoder output for upcoming segment text
             + att_history_out_dim  # Size of the attention mechanism output for summarized historical segments
             + 2  # One-hot speaker role vector
-            # + (
-            #     ext_ist_token_dim
-            #     if ext_ist_enabled and ext_ist_token_dim is not None
-            #     else 0
-            # )  # IST token dimensions if active
+            + (
+                ext_ist_token_dim
+                if ext_ist_enabled
+                and ext_ist_decoder_in
+                and ext_ist_token_dim is not None
+                else 0
+            )  # IST token dimensions if active
         )
 
         # Initialize the decoders
@@ -302,6 +305,7 @@ class CDModel(pl.LightningModule):
         # in analytical mode, and to determine if the model can account for its partner's personality
         # when predicting its own speech features.
         self.ext_ist_enabled: Final[bool] = ext_ist_enabled
+        self.ext_ist_decoder_in: Final[bool] = ext_ist_decoder_in
         self.ist_tokens: nn.Parameter | None = None
         self.ist_encoder: nn.GRU | None = None
         self.ist_linear: nn.Sequential | None = None
@@ -330,15 +334,18 @@ class CDModel(pl.LightningModule):
             )
             self.ist_encoder = nn.GRU(
                 self.num_features,
-                ext_ist_encoder_dim,
+                ext_ist_token_dim // 2,
                 bidirectional=True,
                 batch_first=True,
             )
-            self.ist_q = nn.Linear(
-                ext_ist_encoder_dim * 2, ext_ist_token_dim, bias=False
+            self.ist_att = nn.MultiheadAttention(
+                embed_dim=ext_ist_token_dim,
+                num_heads=8,
+                bias=False,
+                kdim=ext_ist_token_dim,
+                vdim=ext_ist_token_dim,
+                batch_first=True,
             )
-            self.ist_k = nn.Linear(ext_ist_token_dim, ext_ist_token_dim, bias=False)
-            self.ist_v = nn.Linear(ext_ist_token_dim, ext_ist_token_dim, bias=False)
 
     # TODO: Keep the input parameters cleaned up
     def forward(
@@ -421,7 +428,7 @@ class CDModel(pl.LightningModule):
             and self.ist_encoder is not None
             # and self.ist_linear is not None
         ):
-            ist_tokens = F.tanh(self.ist_tokens)
+            ist_tokens = F.tanh(self.ist_tokens).repeat((batch_size, 1, 1))
             # print(segment_features_delta_sides[DialogueSystemRole.agent])
             ist_in = nn.utils.rnn.pack_padded_sequence(
                 segment_features_delta_sides[DialogueSystemRole.agent],
@@ -431,14 +438,11 @@ class CDModel(pl.LightningModule):
             )
             _, ist_h = self.ist_encoder(ist_in)
             ist_h = torch.cat([ist_h[0], ist_h[1]], -1)
-            ist_q = self.ist_q(ist_h).unsqueeze(1).unsqueeze(1)
-            ist_k = self.ist_k(ist_tokens).unsqueeze(0)
-            ist_v = self.ist_v(ist_tokens).unsqueeze(0)
-            ist_embeddings, ist_weights = scaled_dot_product_attention(
-                ist_q, ist_k, ist_v
+            ist_embeddings_att, ist_weights_att = self.ist_att(
+                query=ist_h.unsqueeze(1), key=ist_tokens, value=ist_tokens
             )
-            ist_embeddings = ist_embeddings.squeeze()
-            ist_weights = ist_weights.squeeze()
+            ist_embeddings = ist_embeddings_att.squeeze()
+            ist_weights = ist_weights_att.squeeze()
 
         # Iterate through the conversation
         for i in range(num_segments - 1):
@@ -538,8 +542,8 @@ class CDModel(pl.LightningModule):
                     embeddings_encoded_segmented[i + 1],
                     speaker_role_encoded_segmented[i + 1],
                 ]
-                # if ist_embeddings is not None:
-                #     decoder_in_arr.append(ist_embeddings)
+                if ist_embeddings is not None and self.ext_ist_decoder_in:
+                    decoder_in_arr.append(ist_embeddings)
                 decoder_in = torch.cat(decoder_in_arr, dim=-1)
 
                 decoder_out, h_out, decoder_high = decoder(decoder_in, h)
