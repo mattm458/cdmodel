@@ -73,7 +73,7 @@ def assign_speaker_roles(
     role_type: RoleType,
     role_assignment_strategy: RoleAssignmentStrategy,
     random: Random,
-) -> list[list[DialogueSystemRole]] | list[list[AnalysisRole]]:
+) -> tuple[list[list[Role]], dict[Role, int]]:
     first_speaker_id = speaker_ids[0]
     second_speaker_id = list(set(speaker_ids) - set([speaker_ids[0]]))[0]
 
@@ -82,13 +82,17 @@ def assign_speaker_roles(
             assignments_ds = __get_speaker_role_assignment_ds(
                 first_speaker_id, second_speaker_id, role_assignment_strategy, random
             )
-            return [[assignments_ds[x] for x in speaker_ids]]
+            return [[assignments_ds[x] for x in speaker_ids]], {
+                v: k for k, v in assignments_ds.items()
+            }
 
         case RoleType.Analysis:
             assignments_a = __get_speaker_role_assignment_a(
                 first_speaker_id, second_speaker_id, role_assignment_strategy, random
             )
-            return [[assignments_a[x] for x in speaker_ids]]
+            return [[assignments_a[x] for x in speaker_ids]], {
+                v: k for k, v in assignments_a.items()
+            }
 
         case _:
             raise NotImplementedError(f"Role type {role_type} is not implemented")
