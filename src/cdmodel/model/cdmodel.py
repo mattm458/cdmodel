@@ -10,6 +10,7 @@ from torch.nn import functional as F
 from cdmodel.common.data import ConversationData, Role
 from cdmodel.common.role_assignment import DialogueSystemRole, RoleType
 from cdmodel.model.components import (
+    Attention,
     Decoder,
     DualAttention,
     EmbeddingEncoder,
@@ -58,33 +59,17 @@ class CDModelOutput(NamedTuple):
     b_mask: Tensor
     ist_weights: Tensor | None
     ist_embeddings: Tensor | None
+    ext_ist_pred_speaker_id: Tensor | None
+    ext_ist_pred_gender: Tensor | None
 
 
 # TODO: Should these be moved to a common source file?
 CDPredictionStrategy = Enum("CDPredictionStrategy", ["both", "agent"])
 SpeakerRoleEncoding = Enum("SpeakerRoleEncoding", ["one_hot"])
 CDAttentionStyle = Enum("CDAttentionStyle", ["dual", "single_both", "single_partner"])
+ISTAttentionStyle = Enum("ISTAttentionStyle", ["multi_head", "additive"])
 
-
-def scaled_dot_product_attention(
-    query,
-    key,
-    value,
-    dropout_p=0.0,
-    scale=None,
-    enable_gqa=False,
-) -> tuple[torch.Tensor, torch.Tensor]:
-    L, S = query.size(-2), key.size(-2)
-    scale_factor = 1 / math.sqrt(query.size(-1)) if scale is None else scale
-
-    if enable_gqa:
-        key = key.repeat_interleave(query.size(-3) // key.size(-3), -3)
-        value = value.repeat_interleave(query.size(-3) // value.size(-3), -3)
-
-    attn_weight = query @ key.transpose(-2, -1) * scale_factor
-    attn_weight = torch.softmax(attn_weight, dim=-1)
-    attn_weight = torch.dropout(attn_weight, dropout_p, train=True)
-    return attn_weight @ value, attn_weight
+_GENDER_DICT: Final[dict[str, int]] = {"f": 0, "m": 1}
 
 
 class CDModel(pl.LightningModule):
@@ -111,9 +96,13 @@ class CDModel(pl.LightningModule):
         role_type: str,
         lr: float,
         ext_ist_enabled: bool,  # Whether to enable ISTs (see below)
+        ext_ist_encoded_concat: bool,  # Whether to concatenate the IST with encoded input
+        ext_ist_att_in: bool,  # Whether to pass the IST into the attention layer
         ext_ist_decoder_in: bool,  # Whether to pass the IST into the decoder
+        ext_ist_att_style: str,
         ext_ist_objective_speaker_id: bool = False,  # Whether the IST token should be evaluated on its ability to predict the speaker ID during training
         ext_ist_objective_speaker_gender: bool = False,  # Whether the IST token should be evaluated on its ability to predict the speaker gender during training
+        ext_ist_objective_speaker_id_num: Optional[int] = None,
         ext_ist_token_dim: Optional[int] = None,  # The dimensionality of each IST token
         ext_ist_token_count: Optional[int] = None,  # The number of IST tokens
         ext_ist_encoder_dim: Optional[int] = None,  # The IST encoder output dimensions
@@ -177,7 +166,9 @@ class CDModel(pl.LightningModule):
         )
 
         # The dimensions of each historical timestep as output by the segment encoder.
-        history_dim: Final[int] = encoder_hidden_dim
+        history_dim: Final[int] = encoder_hidden_dim + (
+            ext_ist_token_dim if ext_ist_enabled and ext_ist_encoded_concat else 0
+        )
 
         # Attention
         # =====================
@@ -197,7 +188,7 @@ class CDModel(pl.LightningModule):
             + (decoder_hidden_dim * decoder_num_layers)  # The decoder hidden state
             + (
                 ext_ist_token_dim
-                if ext_ist_enabled and ext_ist_token_dim is not None
+                if ext_ist_enabled and ext_ist_att_in and ext_ist_token_dim is not None
                 else 0
             )  # IST token dimensions if active
         )
@@ -307,14 +298,21 @@ class CDModel(pl.LightningModule):
         # in analytical mode, and to determine if the model can account for its partner's personality
         # when predicting its own speech features.
         self.ext_ist_enabled: Final[bool] = ext_ist_enabled
+        self.ext_ist_encoded_concat: Final[bool] = ext_ist_encoded_concat
+        self.ext_ist_att_in: Final[bool] = ext_ist_att_in
         self.ext_ist_decoder_in: Final[bool] = ext_ist_decoder_in
         self.ext_ist: Final[bool] = ext_ist_objective_speaker_id
         self.ext_ist_objective_speaker_gender: Final[bool] = (
             ext_ist_objective_speaker_gender
         )
+        self.ext_ist_objective_speaker_id: Final[bool] = ext_ist_objective_speaker_id
         self.ist_tokens: nn.Parameter | None = None
         self.ist_encoder: nn.GRU | None = None
         self.ist_linear: nn.Sequential | None = None
+
+        self.ext_ist_att_style = ISTAttentionStyle[ext_ist_att_style]
+        del ext_ist_att_style
+
         if ext_ist_enabled:
             if self.role_type != RoleType.DialogueSystem:
                 raise Exception(
@@ -344,14 +342,31 @@ class CDModel(pl.LightningModule):
                 bidirectional=True,
                 batch_first=True,
             )
-            self.ist_att = nn.MultiheadAttention(
-                embed_dim=ext_ist_token_dim,
-                num_heads=8,
-                bias=False,
-                kdim=ext_ist_token_dim,
-                vdim=ext_ist_token_dim,
-                batch_first=True,
-            )
+
+            if self.ext_ist_att_style == ISTAttentionStyle.multi_head:
+                self.ist_att_multi_head = nn.MultiheadAttention(
+                    embed_dim=ext_ist_token_dim,
+                    num_heads=1,
+                    kdim=ext_ist_token_dim,
+                    vdim=ext_ist_token_dim,
+                    batch_first=True,
+                )
+            elif self.ext_ist_att_style == ISTAttentionStyle.additive:
+                self.ist_att_additive = Attention(
+                    history_in_dim=ext_ist_token_dim,
+                    context_dim=ext_ist_token_dim,
+                    att_dim=ext_ist_token_dim,
+                )
+
+            if self.ext_ist_objective_speaker_id and ext_ist_objective_speaker_id_num:
+                self.ext_ist_speaker_id_linear = nn.Sequential(
+                    nn.Linear(ext_ist_token_dim, ext_ist_objective_speaker_id_num),
+                )
+
+            if self.ext_ist_objective_speaker_gender:
+                self.ext_ist_gender_linear = nn.Sequential(
+                    nn.Linear(ext_ist_token_dim, 2)
+                )
 
     # TODO: Keep the input parameters cleaned up
     def forward(
@@ -362,7 +377,6 @@ class CDModel(pl.LightningModule):
         embeddings: Tensor,
         embeddings_len: Tensor,
         conv_len: list[int],
-        speaker_id_idx: Tensor,
         speaker_role_idx: Tensor,
         autoregressive: bool,
     ) -> CDModelOutput:
@@ -429,6 +443,8 @@ class CDModel(pl.LightningModule):
         # IST Tokens
         ist_embeddings: Tensor | None = None
         ist_weights: Tensor | None = None
+        ext_ist_pred_speaker_id: Tensor | None = None
+        ext_ist_pred_gender: Tensor | None = None
         if (
             self.ist_tokens is not None
             and self.ist_encoder is not None
@@ -444,11 +460,25 @@ class CDModel(pl.LightningModule):
             )
             _, ist_h = self.ist_encoder(ist_in)
             ist_h = torch.cat([ist_h[0], ist_h[1]], -1)
-            ist_embeddings_att, ist_weights_att = self.ist_att(
-                query=ist_h.unsqueeze(1), key=ist_tokens, value=ist_tokens
-            )
+
+            if self.ext_ist_att_style == ISTAttentionStyle.multi_head:
+                ist_embeddings_att, ist_weights_att = self.ist_att_multi_head(
+                    query=ist_h.unsqueeze(1), key=ist_tokens, value=ist_tokens
+                )
+            elif self.ext_ist_att_style == ISTAttentionStyle.additive:
+                ist_embeddings_att, ist_weights_att = self.ist_att_additive(
+                    history=ist_tokens, context=ist_h
+                )
+
             ist_embeddings = ist_embeddings_att.squeeze()
+
             ist_weights = ist_weights_att.squeeze()
+
+            if self.ext_ist_objective_speaker_id:
+                ext_ist_pred_speaker_id = self.ext_ist_speaker_id_linear(ist_embeddings)
+
+            if self.ext_ist_objective_speaker_gender:
+                ext_ist_pred_gender = self.ext_ist_gender_linear(ist_embeddings)
 
         # Iterate through the conversation
         for i in range(num_segments - 1):
@@ -485,6 +515,15 @@ class CDModel(pl.LightningModule):
 
             # Concatenate the history tensor and select specific batch indexes where we are predicting
             history = torch.stack(history_cat, dim=1)
+
+            if self.ext_ist_encoded_concat and ist_embeddings is not None:
+                history = torch.concat(
+                    [
+                        history,
+                        ist_embeddings.unsqueeze(1).repeat((1, history.shape[1], 1)),
+                    ],
+                    dim=-1,
+                )
 
             a_scores_cat: list[Tensor] = []
             b_scores_cat: list[Tensor] = []
@@ -524,7 +563,7 @@ class CDModel(pl.LightningModule):
                 )
             ):
                 attention_context = h + [embeddings_encoded_segmented[i + 1]]
-                if ist_embeddings is not None:
+                if self.ext_ist_att_in and ist_embeddings is not None:
                     attention_context.append(ist_embeddings)
 
                 history_encoded, att_scores = attention(
@@ -596,6 +635,8 @@ class CDModel(pl.LightningModule):
             ),
             a_mask=expand_cat(a_mask_all, dim=-1),
             b_mask=expand_cat(b_mask_all, dim=-1),
+            ext_ist_pred_speaker_id=ext_ist_pred_speaker_id,
+            ext_ist_pred_gender=ext_ist_pred_gender,
         )
 
     def configure_optimizers(self) -> torch.optim.Optimizer:
@@ -609,7 +650,6 @@ class CDModel(pl.LightningModule):
             embeddings=batch.embeddings,
             embeddings_len=batch.embeddings_segment_len,
             conv_len=batch.num_segments,
-            speaker_id_idx=batch.speaker_id_idx,
             speaker_role_idx=batch.speaker_role_idx,
             autoregressive=True,
         )
@@ -623,6 +663,61 @@ class CDModel(pl.LightningModule):
         self.log(
             "training_loss", loss.detach(), on_epoch=True, on_step=True, sync_dist=True
         )
+
+        if self.ext_ist_objective_speaker_id:
+            speaker_id_loss = F.cross_entropy(
+                results.ext_ist_pred_speaker_id,
+                torch.tensor(
+                    [
+                        x[DialogueSystemRole.agent]
+                        for x in batch.role_speaker_assignment
+                    ],
+                    device=results.ext_ist_pred_speaker_id.device,
+                ),
+            )
+            self.log(
+                "training_speaker_id_loss",
+                speaker_id_loss.detach(),
+                on_epoch=True,
+                on_step=True,
+                sync_dist=True,
+            )
+            loss += speaker_id_loss
+
+        if self.ext_ist_objective_speaker_gender:
+            speaker_gender_loss = F.cross_entropy(
+                results.ext_ist_pred_gender,
+                torch.tensor(
+                    [
+                        _GENDER_DICT[x[DialogueSystemRole.agent]]
+                        for x in batch.role_gender_assignment
+                    ],
+                    device=y.device,
+                ),
+            )
+            self.log(
+                "train_speaker_gender_loss",
+                speaker_gender_loss.detach(),
+                on_epoch=True,
+                on_step=True,
+                sync_dist=True,
+            )
+            loss += speaker_gender_loss
+
+        if self.ext_ist_enabled:
+            self.log(
+                "training_ist_entropy",
+                (
+                    torch.distributions.Categorical(
+                        results.ist_weights.detach()
+                    ).entropy()
+                    / math.log(y.shape[0])
+                ).mean(),
+                on_epoch=True,
+                on_step=True,
+                sync_dist=True,
+            )
+
         for feature_idx, feature_name in enumerate(self.feature_names):
             self.log(
                 f"training_loss_l1_{feature_name}",
@@ -647,7 +742,6 @@ class CDModel(pl.LightningModule):
             embeddings=batch.embeddings,
             embeddings_len=batch.embeddings_segment_len,
             conv_len=batch.num_segments,
-            speaker_id_idx=batch.speaker_id_idx,
             speaker_role_idx=batch.speaker_role_idx,
             autoregressive=True,
         )
@@ -667,6 +761,56 @@ class CDModel(pl.LightningModule):
             "validation_loss_l1", loss_l1, on_epoch=True, on_step=False, sync_dist=True
         )
 
+        if self.ext_ist_enabled:
+            self.log(
+                "validation_ist_entropy",
+                (
+                    torch.distributions.Categorical(results.ist_weights).entropy()
+                    / math.log(y.shape[0])
+                ).mean(),
+                on_epoch=True,
+                on_step=False,
+                sync_dist=True,
+            )
+
+        if self.ext_ist_objective_speaker_id:
+            speaker_id_loss = F.cross_entropy(
+                results.ext_ist_pred_speaker_id,
+                torch.tensor(
+                    [
+                        x[DialogueSystemRole.agent]
+                        for x in batch.role_speaker_assignment
+                    ],
+                    device=results.ext_ist_pred_speaker_id.device,
+                ),
+            )
+            self.log(
+                "validation_speaker_id_loss",
+                speaker_id_loss,
+                on_epoch=True,
+                on_step=False,
+                sync_dist=True,
+            )
+
+        if self.ext_ist_objective_speaker_gender:
+            speaker_gender_loss = F.cross_entropy(
+                results.ext_ist_pred_gender,
+                torch.tensor(
+                    [
+                        _GENDER_DICT[x[DialogueSystemRole.agent]]
+                        for x in batch.role_gender_assignment
+                    ],
+                    device=y.device,
+                ),
+            )
+            self.log(
+                "validation_speaker_gender_loss",
+                speaker_gender_loss,
+                on_epoch=True,
+                on_step=False,
+                sync_dist=True,
+            )
+
         for feature_idx, feature_name in enumerate(self.feature_names):
             self.log(
                 f"validation_loss_l1_{feature_name}",
@@ -681,8 +825,8 @@ class CDModel(pl.LightningModule):
                 sync_dist=True,
             )
 
-        if batch_idx == 0:
-            print(results.ist_weights[0])
+        # if batch_idx == 0:
+        #     print(results.ist_weights[:10])
 
         return loss
 
@@ -694,7 +838,6 @@ class CDModel(pl.LightningModule):
             embeddings=batch.embeddings,
             embeddings_len=batch.embeddings_segment_len,
             conv_len=batch.num_segments,
-            speaker_id_idx=batch.speaker_id_idx,
             speaker_role_idx=batch.speaker_role_idx,
             autoregressive=True,
         )
