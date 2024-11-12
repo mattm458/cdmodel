@@ -20,6 +20,7 @@ dependencies = [
     "jsonargparse[signatures]==4.34.0",
     "lightning==2.4.0",
     "matplotlib==3.9.2",
+    "numpy==2.1.3",
     "pandas==2.2.3",
     "pandas-stubs==2.2.3.241009",
     "pytest==8.3.3",
