@@ -167,7 +167,11 @@ class CDModel(pl.LightningModule):
 
         # The dimensions of each historical timestep as output by the segment encoder.
         history_dim: Final[int] = encoder_hidden_dim + (
-            ext_ist_token_dim if ext_ist_enabled and ext_ist_encoded_concat else 0
+            ext_ist_token_dim
+            if ext_ist_enabled
+            and ext_ist_encoded_concat
+            and ext_ist_token_dim is not None
+            else 0
         )
 
         # Attention
@@ -314,6 +318,8 @@ class CDModel(pl.LightningModule):
         del ext_ist_att_style
 
         if ext_ist_enabled:
+            # TODO: Clean up these requirements - I added a few new configuration options but they
+            # aren't being covered here
             if self.role_type != RoleType.DialogueSystem:
                 raise Exception(
                     "If ISTs are enabled, model must be in DialogueSystem mode"
