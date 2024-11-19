@@ -100,7 +100,6 @@ class CDModel(pl.LightningModule):
         ext_ist_encoded_concat: bool,  # Whether to concatenate the IST with encoded input
         ext_ist_att_in: bool,  # Whether to pass the IST into the attention layer
         ext_ist_decoder_in: bool,  # Whether to pass the IST into the decoder
-        ext_ist_att_style: str,
         ext_ist_sides: str,
         ext_ist_objective_speaker_id: bool = False,  # Whether the IST token should be evaluated on its ability to predict the speaker ID during training
         ext_ist_objective_speaker_gender: bool = False,  # Whether the IST token should be evaluated on its ability to predict the speaker gender during training
@@ -324,9 +323,6 @@ class CDModel(pl.LightningModule):
         self.ist_tokens: nn.Parameter | None = None
         self.ist_encoder: nn.GRU | None = None
 
-        self.ext_ist_att_style = ISTAttentionStyle[ext_ist_att_style]
-        del ext_ist_att_style
-
         if ext_ist_enabled:
             # TODO: Clean up these requirements - I added a few new configuration options but they
             # aren't being covered here
@@ -362,20 +358,11 @@ class CDModel(pl.LightningModule):
             ist_att_dim = ext_ist_token_dim * (
                 2 if self.ext_ist_sides == ISTSides.both else 1
             )
-            if self.ext_ist_att_style == ISTAttentionStyle.multi_head:
-                self.ist_att_multi_head = nn.MultiheadAttention(
-                    embed_dim=ext_ist_token_dim,
-                    num_heads=1,
-                    kdim=ist_att_dim,
-                    vdim=ist_att_dim,
-                    batch_first=True,
-                )
-            elif self.ext_ist_att_style == ISTAttentionStyle.additive:
-                self.ist_att_additive = Attention(
-                    history_in_dim=ext_ist_token_dim,
-                    context_dim=ist_att_dim,
-                    att_dim=ist_att_dim,
-                )
+            self.ist_att_additive = Attention(
+                history_in_dim=ext_ist_token_dim,
+                context_dim=ist_att_dim,
+                att_dim=ist_att_dim,
+            )
 
             if self.ext_ist_objective_speaker_id and ext_ist_objective_speaker_id_num:
                 self.ext_ist_speaker_id_linear = nn.Sequential(
@@ -489,14 +476,9 @@ class CDModel(pl.LightningModule):
 
             print(ist_q.shape)
 
-            if self.ext_ist_att_style == ISTAttentionStyle.multi_head:
-                ist_embeddings_att, ist_weights_att = self.ist_att_multi_head(
-                    query=ist_q.unsqueeze(1), key=ist_tokens, value=ist_tokens
-                )
-            elif self.ext_ist_att_style == ISTAttentionStyle.additive:
-                ist_embeddings_att, ist_weights_att = self.ist_att_additive(
-                    history=ist_tokens, context=ist_q
-                )
+            ist_embeddings_att, ist_weights_att = self.ist_att_additive(
+                history=ist_tokens, context=ist_q
+            )
 
             ist_embeddings = ist_embeddings_att.squeeze()
 
