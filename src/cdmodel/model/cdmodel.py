@@ -68,6 +68,7 @@ CDPredictionStrategy = Enum("CDPredictionStrategy", ["both", "agent"])
 SpeakerRoleEncoding = Enum("SpeakerRoleEncoding", ["one_hot"])
 CDAttentionStyle = Enum("CDAttentionStyle", ["dual", "single_both", "single_partner"])
 ISTAttentionStyle = Enum("ISTAttentionStyle", ["multi_head", "additive"])
+ISTSides = Enum("ISTSides", ["single", "both"])
 
 _GENDER_DICT: Final[dict[str, int]] = {"f": 0, "m": 1}
 
@@ -100,6 +101,7 @@ class CDModel(pl.LightningModule):
         ext_ist_att_in: bool,  # Whether to pass the IST into the attention layer
         ext_ist_decoder_in: bool,  # Whether to pass the IST into the decoder
         ext_ist_att_style: str,
+        ext_ist_sides: str,
         ext_ist_objective_speaker_id: bool = False,  # Whether the IST token should be evaluated on its ability to predict the speaker ID during training
         ext_ist_objective_speaker_gender: bool = False,  # Whether the IST token should be evaluated on its ability to predict the speaker gender during training
         ext_ist_objective_speaker_id_num: Optional[int] = None,
@@ -129,6 +131,9 @@ class CDModel(pl.LightningModule):
             attention_style
         ]
         del attention_style
+
+        self.ext_ist_sides: Final[ISTSides] = ISTSides[ext_ist_sides]
+        del ext_ist_sides
 
         # Embedding Encoder
         # =====================
@@ -187,14 +192,18 @@ class CDModel(pl.LightningModule):
         att_multiplier: Final[int] = 2 if self.attention_style == "dual" else 1
         att_history_out_dim: Final[int] = history_dim * att_multiplier
 
+        ext_ist_att_context_dim: int = (
+            ext_ist_token_dim
+            if ext_ist_enabled and ext_ist_att_in and ext_ist_token_dim is not None
+            else 0
+        )
+        if self.ext_ist_sides == ISTSides.both:
+            ext_ist_att_context_dim *= 2
+
         att_context_dim: Final[int] = (
             embedding_encoder_att_dim  # The encoded representation of the upcoming segment transcript
             + (decoder_hidden_dim * decoder_num_layers)  # The decoder hidden state
-            + (
-                ext_ist_token_dim
-                if ext_ist_enabled and ext_ist_att_in and ext_ist_token_dim is not None
-                else 0
-            )  # IST token dimensions if active
+            + (ext_ist_att_context_dim)  # IST token dimensions if active
         )
 
         # Initialize the attention mechanisms
@@ -244,17 +253,19 @@ class CDModel(pl.LightningModule):
         # Decoders predict speech features from the upcoming segment based on its transcript
         # and from attention-summarized historical segments.
 
+        ext_ist_decoder_in_dim: int = (
+            ext_ist_token_dim
+            if ext_ist_enabled and ext_ist_decoder_in and ext_ist_token_dim is not None
+            else 0
+        )
+        if self.ext_ist_sides == ISTSides.both:
+            ext_ist_decoder_in_dim *= 2
+
         decoder_in_dim = (
             embedding_encoder_out_dim  # Size of the embedding encoder output for upcoming segment text
             + att_history_out_dim  # Size of the attention mechanism output for summarized historical segments
             + 2  # One-hot speaker role vector
-            + (
-                ext_ist_token_dim
-                if ext_ist_enabled
-                and ext_ist_decoder_in
-                and ext_ist_token_dim is not None
-                else 0
-            )  # IST token dimensions if active
+            + ext_ist_decoder_in_dim  # IST token dimensions if active
         )
 
         # Initialize the decoders
@@ -349,19 +360,22 @@ class CDModel(pl.LightningModule):
                 batch_first=True,
             )
 
+            ist_att_dim = ext_ist_token_dim * (
+                2 if self.ext_ist_sides == ISTSides.both else 1
+            )
             if self.ext_ist_att_style == ISTAttentionStyle.multi_head:
                 self.ist_att_multi_head = nn.MultiheadAttention(
                     embed_dim=ext_ist_token_dim,
                     num_heads=1,
-                    kdim=ext_ist_token_dim,
-                    vdim=ext_ist_token_dim,
+                    kdim=ist_att_dim,
+                    vdim=ist_att_dim,
                     batch_first=True,
                 )
             elif self.ext_ist_att_style == ISTAttentionStyle.additive:
                 self.ist_att_additive = Attention(
                     history_in_dim=ext_ist_token_dim,
-                    context_dim=ext_ist_token_dim,
-                    att_dim=ext_ist_token_dim,
+                    context_dim=ist_att_dim,
+                    att_dim=ist_att_dim,
                 )
 
             if self.ext_ist_objective_speaker_id and ext_ist_objective_speaker_id_num:
@@ -457,23 +471,39 @@ class CDModel(pl.LightningModule):
             # and self.ist_linear is not None
         ):
             ist_tokens = F.tanh(self.ist_tokens).repeat((batch_size, 1, 1))
-            # print(segment_features_delta_sides[DialogueSystemRole.agent])
-            ist_in = nn.utils.rnn.pack_padded_sequence(
-                segment_features_delta_sides[DialogueSystemRole.agent],
-                segment_features_delta_sides_len[DialogueSystemRole.agent],
-                batch_first=True,
-                enforce_sorted=False,
+
+            _, ist_h_agent = self.ist_encoder(
+                nn.utils.rnn.pack_padded_sequence(
+                    segment_features_delta_sides[DialogueSystemRole.agent],
+                    segment_features_delta_sides_len[DialogueSystemRole.agent],
+                    batch_first=True,
+                    enforce_sorted=False,
+                )
             )
-            _, ist_h = self.ist_encoder(ist_in)
-            ist_h = torch.cat([ist_h[0], ist_h[1]], -1)
+            ist_h_cat = [ist_h_agent[0], ist_h_agent[1]]
+
+            if self.ext_ist_sides == ISTSides.both:
+                _, ist_h_other = self.ist_encoder(
+                    nn.utils.rnn.pack_padded_sequence(
+                        segment_features_delta_sides[DialogueSystemRole.partner],
+                        segment_features_delta_sides_len[DialogueSystemRole.partner],
+                        batch_first=True,
+                        enforce_sorted=False,
+                    )
+                )
+                ist_h_cat.extend([ist_h_other[0], ist_h_other[1]])
+
+            ist_q = torch.cat(ist_h_cat, -1)
+
+            print(ist_q.shape)
 
             if self.ext_ist_att_style == ISTAttentionStyle.multi_head:
                 ist_embeddings_att, ist_weights_att = self.ist_att_multi_head(
-                    query=ist_h.unsqueeze(1), key=ist_tokens, value=ist_tokens
+                    query=ist_q.unsqueeze(1), key=ist_tokens, value=ist_tokens
                 )
             elif self.ext_ist_att_style == ISTAttentionStyle.additive:
                 ist_embeddings_att, ist_weights_att = self.ist_att_additive(
-                    history=ist_tokens, context=ist_h
+                    history=ist_tokens, context=ist_q
                 )
 
             ist_embeddings = ist_embeddings_att.squeeze()
@@ -676,7 +706,7 @@ class CDModel(pl.LightningModule):
                 torch.tensor(
                     [
                         x[DialogueSystemRole.agent]
-                        for x in batch.role_speaker_assignment
+                        for x in batch.role_speaker_assignment_idx
                     ],
                     device=results.ext_ist_pred_speaker_id.device,
                 ),
@@ -785,7 +815,7 @@ class CDModel(pl.LightningModule):
                 torch.tensor(
                     [
                         x[DialogueSystemRole.agent]
-                        for x in batch.role_speaker_assignment
+                        for x in batch.role_speaker_assignment_idx
                     ],
                     device=results.ext_ist_pred_speaker_id.device,
                 ),
