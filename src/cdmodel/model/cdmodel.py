@@ -9,7 +9,7 @@ from torch.nn import functional as F
 
 from cdmodel.common.data import ConversationData, Role
 from cdmodel.common.role_assignment import DialogueSystemRole, RoleType
-from cdmodel.model.components import (
+from cdmodel.model.components.components import (
     Attention,
     Decoder,
     DualAttention,
@@ -19,6 +19,7 @@ from cdmodel.model.components import (
     SingleAttention,
     SinglePartnerAttention,
 )
+from cdmodel.model.components.ext_ist import ISTOneShotEncoder
 from cdmodel.model.util import one_hot_drop_0, timestep_split
 
 
@@ -101,7 +102,7 @@ class CDModel(pl.LightningModule):
         ext_ist_encoded_concat: bool,  # Whether to concatenate the IST with encoded input
         ext_ist_att_in: bool,  # Whether to pass the IST into the attention layer
         ext_ist_decoder_in: bool,  # Whether to pass the IST into the decoder
-        ext_ist_sides: str,
+        ext_ist_sides: str,  # Whether we should compute the IST for one side ("single") or both sides ("both").
         ext_ist_style: str,  # Whether the IST should be computed at once from all conversational data ("one_shot"), computed incrementally as the conversation progresses ("incremental"), or both ("blended"). Blended mode is only available in dialogue system mode.
         ext_ist_objective_speaker_id: bool = False,  # Whether the IST token should be evaluated on its ability to predict the speaker ID during training
         ext_ist_objective_speaker_gender: bool = False,  # Whether the IST token should be evaluated on its ability to predict the speaker gender during training
@@ -350,24 +351,14 @@ class CDModel(pl.LightningModule):
                     "If ISTs are enabled, ext_ist_encoder_dim cannot be None"
                 )
 
-            self.ist_tokens = nn.Parameter(
-                torch.randn(ext_ist_token_count, ext_ist_token_dim), requires_grad=True
-            )
-            self.ist_encoder = nn.GRU(
-                self.num_features,
-                ext_ist_token_dim // 2,
-                bidirectional=True,
-                batch_first=True,
-            )
-
-            ist_att_dim = ext_ist_token_dim * (
-                2 if self.ext_ist_sides == ISTSides.both else 1
-            )
-            self.ist_att_additive = Attention(
-                history_in_dim=ext_ist_token_dim,
-                context_dim=ist_att_dim,
-                att_dim=ist_att_dim,
-            )
+            self.ext_ist_encoder_one_shot: ISTOneShotEncoder | None = None
+            if self.ext_ist_style == ISTStyle.one_shot:
+                self.ext_ist_encoder_one_shot = ISTOneShotEncoder(
+                    token_count=ext_ist_token_count,
+                    token_dim=ext_ist_token_dim,
+                    num_features=self.num_features,
+                    att_dim=ext_ist_token_dim,
+                )
 
             if self.ext_ist_objective_speaker_id and ext_ist_objective_speaker_id_num:
                 self.ext_ist_speaker_id_linear = nn.Sequential(
@@ -453,47 +444,17 @@ class CDModel(pl.LightningModule):
         ist_weights: Tensor | None = None
         ext_ist_pred_speaker_id: Tensor | None = None
         ext_ist_pred_gender: Tensor | None = None
-        if self.ist_tokens is not None and self.ist_encoder is not None:
-            ist_tokens = F.tanh(self.ist_tokens).repeat((batch_size, 1, 1))
-
-            _, ist_h_agent = self.ist_encoder(
-                nn.utils.rnn.pack_padded_sequence(
-                    segment_features_delta_sides[DialogueSystemRole.agent],
-                    segment_features_delta_sides_len[DialogueSystemRole.agent],
-                    batch_first=True,
-                    enforce_sorted=False,
-                )
-            )
-            ist_h_cat = [ist_h_agent[0], ist_h_agent[1]]
-
-            if self.ext_ist_sides == ISTSides.both:
-                _, ist_h_other = self.ist_encoder(
-                    nn.utils.rnn.pack_padded_sequence(
-                        segment_features_delta_sides[DialogueSystemRole.partner],
-                        segment_features_delta_sides_len[DialogueSystemRole.partner],
-                        batch_first=True,
-                        enforce_sorted=False,
-                    )
-                )
-                ist_h_cat.extend([ist_h_other[0], ist_h_other[1]])
-
-            ist_q = torch.cat(ist_h_cat, -1)
-
-            print(ist_q.shape)
-
-            ist_embeddings_att, ist_weights_att = self.ist_att_additive(
-                history=ist_tokens, context=ist_q
+        if self.ext_ist_encoder_one_shot is not None:
+            ist_embeddings, ist_weights = self.ext_ist_encoder_one_shot(
+                segment_features_delta_sides[DialogueSystemRole.agent],
+                segment_features_delta_sides_len[DialogueSystemRole.agent],
             )
 
-            ist_embeddings = ist_embeddings_att.squeeze()
+        if self.ext_ist_objective_speaker_id:
+            ext_ist_pred_speaker_id = self.ext_ist_speaker_id_linear(ist_embeddings)
 
-            ist_weights = ist_weights_att.squeeze()
-
-            if self.ext_ist_objective_speaker_id:
-                ext_ist_pred_speaker_id = self.ext_ist_speaker_id_linear(ist_embeddings)
-
-            if self.ext_ist_objective_speaker_gender:
-                ext_ist_pred_gender = self.ext_ist_gender_linear(ist_embeddings)
+        if self.ext_ist_objective_speaker_gender:
+            ext_ist_pred_gender = self.ext_ist_gender_linear(ist_embeddings)
 
         # Iterate through the conversation
         for i in range(num_segments - 1):
