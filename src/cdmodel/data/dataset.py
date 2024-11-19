@@ -58,17 +58,21 @@ class ConversationDataset(Dataset):
         self.deterministic: Final[bool] = deterministic
         self.random = Random()
 
-        self.calldata = pd.concat(
-            [
-                pd.read_csv(path.join(dataset_dir, "fe_03_p1_calldata.tbl")),
-                pd.read_csv(path.join(dataset_dir, "fe_03_p2_calldata.tbl")),
-            ]
-        ).reset_index(drop=True)
+        try:
+            self.calldata = pd.concat(
+                [
+                    pd.read_csv(path.join(dataset_dir, "fe_03_p1_calldata.tbl")),
+                    pd.read_csv(path.join(dataset_dir, "fe_03_p2_calldata.tbl")),
+                ]
+            ).reset_index(drop=True)
 
-        # TODO: Make this part of the preprocessing
-        self.pindata = pd.read_csv(
-            path.join(dataset_dir, "fe_03_pindata.tbl"), index_col="PIN"
-        )
+            # TODO: Make this part of the preprocessing
+            self.pindata = pd.read_csv(
+                path.join(dataset_dir, "fe_03_pindata.tbl"), index_col="PIN"
+            )
+        except:
+            self.calldata = None
+            self.pindata = None
 
     def __len__(self) -> int:
         return len(self.conv_ids)
@@ -136,9 +140,10 @@ class ConversationDataset(Dataset):
             #     for k, v in role_speaker_assignment.items()
             # }
         except:
-            for k, v in role_speaker_assignment.items():
-                print(v)
-                print(self.pindata.loc[v].S_SEX)
+            pass
+            # for k, v in role_speaker_assignment.items():
+            #     print(v)
+            #     print(self.pindata.loc[v].S_SEX)
 
         segment_features_delta_sides: dict[Role, Tensor] = {}
         segment_features_delta_sides_len: dict[Role, list[int]] = {}
@@ -200,6 +205,7 @@ class ConversationDataset(Dataset):
             # TODO: Fix this type
             speaker_role=speaker_role,
             speaker_role_idx=speaker_role_idx.unsqueeze(0),
-            role_speaker_assignment=[role_speaker_assignment_idx],
+            role_speaker_assignment=[role_speaker_assignment],
+            role_speaker_assignment_idx=[role_speaker_assignment_idx],
             role_gender_assignment=[role_speaker_assignment_gender],
         )
