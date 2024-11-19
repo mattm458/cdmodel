@@ -323,7 +323,6 @@ class CDModel(pl.LightningModule):
         self.ext_ist_objective_speaker_id: Final[bool] = ext_ist_objective_speaker_id
         self.ist_tokens: nn.Parameter | None = None
         self.ist_encoder: nn.GRU | None = None
-        self.ist_linear: nn.Sequential | None = None
 
         self.ext_ist_att_style = ISTAttentionStyle[ext_ist_att_style]
         del ext_ist_att_style
@@ -398,7 +397,7 @@ class CDModel(pl.LightningModule):
         embeddings_len: Tensor,
         conv_len: list[int],
         speaker_role_idx: Tensor,
-        autoregressive: bool,
+        is_autoregressive: bool,
     ) -> CDModelOutput:
         # Get some basic information about the batch
         batch_size: Final[int] = segment_features.shape[0]
@@ -426,7 +425,7 @@ class CDModel(pl.LightningModule):
 
         predict_next_segmented = timestep_split(predict_next)
         speaker_role_encoded_segmented = timestep_split(speaker_role_encoded)
-        features_segmented = timestep_split(segment_features)
+        features_arr = timestep_split(segment_features)
         predict_next_segmented = timestep_split(predict_next)
         embeddings_encoded_segmented = timestep_split(embeddings_encoded)
 
@@ -450,26 +449,19 @@ class CDModel(pl.LightningModule):
         b_mask_all: list[Tensor] = []
 
         # Placeholders to contain predicted features carried over from the previous timestep
-        prev_features = torch.zeros((batch_size, self.num_features), device=device)
-        prev_predict = torch.zeros((batch_size,), device=device, dtype=torch.bool)
+        features_prev = torch.zeros((batch_size, self.num_features), device=device)
+        predict_prev = torch.zeros((batch_size,), device=device, dtype=torch.bool)
 
         predict_cat: list[Tensor] = []
 
         history_encoded_timesteps: list[Tensor] = []
-
-        partner_encoded_all: list[Tensor] = []
-        partner_identity_pred_all: list[Tensor] = []
 
         # IST Tokens
         ist_embeddings: Tensor | None = None
         ist_weights: Tensor | None = None
         ext_ist_pred_speaker_id: Tensor | None = None
         ext_ist_pred_gender: Tensor | None = None
-        if (
-            self.ist_tokens is not None
-            and self.ist_encoder is not None
-            # and self.ist_linear is not None
-        ):
+        if self.ist_tokens is not None and self.ist_encoder is not None:
             ist_tokens = F.tanh(self.ist_tokens).repeat((batch_size, 1, 1))
 
             _, ist_h_agent = self.ist_encoder(
@@ -518,26 +510,26 @@ class CDModel(pl.LightningModule):
 
         # Iterate through the conversation
         for i in range(num_segments - 1):
-            predict_cat.append(prev_predict.unsqueeze(1))
+            predict_cat.append(predict_prev.unsqueeze(1))
 
             # Autoregression/teacher forcing:
             # Create a mask that contains True if a previously predicted feature should be fed
             # back into the model, or False if the ground truth value should be used instead
             # (i.e., teacher forcing)
-            autoregress_mask = prev_predict * autoregressive
-            features_segment = features_segmented[i].clone()
-            features_segment[autoregress_mask] = (
-                prev_features[autoregress_mask]
+            autoregress_mask_i = predict_prev * is_autoregressive
+            features_i = features_arr[i].clone()
+            features_i[autoregress_mask_i] = (
+                features_prev[autoregress_mask_i]
                 .detach()
                 .clone()
-                .type(features_segment.dtype)
+                .type(features_i.dtype)
             )
 
             # Assemble the encoder input. This includes the current conversation features
             # and the previously-encoded embeddings.
             encoder_in: Tensor = torch.cat(
                 [
-                    features_segment,
+                    features_i,
                     embeddings_encoded_segmented[i],
                     speaker_role_encoded_segmented[i],
                 ],
@@ -653,10 +645,10 @@ class CDModel(pl.LightningModule):
             a_mask_all.append(torch.cat(a_mask_cat, dim=1))
             b_mask_all.append(torch.cat(b_mask_cat, dim=1))
 
-            prev_predict = predict_next_segmented[i]
-            prev_features = features_pred
+            predict_prev = predict_next_segmented[i]
+            features_prev = features_pred
 
-        predict_cat.append(prev_predict.unsqueeze(1))
+        predict_cat.append(predict_prev.unsqueeze(1))
 
         return CDModelOutput(
             predicted_segment_features=torch.cat(decoded_all_cat, dim=1),
@@ -687,7 +679,7 @@ class CDModel(pl.LightningModule):
             embeddings_len=batch.embeddings_segment_len,
             conv_len=batch.num_segments,
             speaker_role_idx=batch.speaker_role_idx,
-            autoregressive=True,
+            is_autoregressive=True,
         )
 
         y = batch.segment_features[:, 1:]
@@ -779,7 +771,7 @@ class CDModel(pl.LightningModule):
             embeddings_len=batch.embeddings_segment_len,
             conv_len=batch.num_segments,
             speaker_role_idx=batch.speaker_role_idx,
-            autoregressive=True,
+            is_autoregressive=True,
         )
 
         y = batch.segment_features[:, 1:]
@@ -875,7 +867,7 @@ class CDModel(pl.LightningModule):
             embeddings_len=batch.embeddings_segment_len,
             conv_len=batch.num_segments,
             speaker_role_idx=batch.speaker_role_idx,
-            autoregressive=True,
+            is_autoregressive=True,
         )
 
     def on_train_epoch_end(self):
