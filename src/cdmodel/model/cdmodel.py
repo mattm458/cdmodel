@@ -69,6 +69,7 @@ SpeakerRoleEncoding = Enum("SpeakerRoleEncoding", ["one_hot"])
 CDAttentionStyle = Enum("CDAttentionStyle", ["dual", "single_both", "single_partner"])
 ISTAttentionStyle = Enum("ISTAttentionStyle", ["multi_head", "additive"])
 ISTSides = Enum("ISTSides", ["single", "both"])
+ISTStyle = Enum("ISTStyle", ["one_shot", "incremental", "blended"])
 
 _GENDER_DICT: Final[dict[str, int]] = {"f": 0, "m": 1}
 
@@ -101,6 +102,7 @@ class CDModel(pl.LightningModule):
         ext_ist_att_in: bool,  # Whether to pass the IST into the attention layer
         ext_ist_decoder_in: bool,  # Whether to pass the IST into the decoder
         ext_ist_sides: str,
+        ext_ist_style: str,  # Whether the IST should be computed at once from all conversational data ("one_shot"), computed incrementally as the conversation progresses ("incremental"), or both ("blended"). Blended mode is only available in dialogue system mode.
         ext_ist_objective_speaker_id: bool = False,  # Whether the IST token should be evaluated on its ability to predict the speaker ID during training
         ext_ist_objective_speaker_gender: bool = False,  # Whether the IST token should be evaluated on its ability to predict the speaker gender during training
         ext_ist_objective_speaker_id_num: Optional[int] = None,
@@ -133,6 +135,9 @@ class CDModel(pl.LightningModule):
 
         self.ext_ist_sides: Final[ISTSides] = ISTSides[ext_ist_sides]
         del ext_ist_sides
+
+        self.ext_ist_style: Final[ISTStyle] = ISTStyle[ext_ist_style]
+        del ext_ist_style
 
         # Embedding Encoder
         # =====================
