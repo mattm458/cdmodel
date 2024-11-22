@@ -1,9 +1,12 @@
 from typing import Literal, NamedTuple, Optional
 
 import torch
+from enum import Enum
 from torch import Tensor, nn
 
-from cdmodel.model.util import lengths_to_mask
+from cdmodel.model.util.util import lengths_to_mask
+
+AttentionActivation = Enum("AttentionActivation", ["softmax", "sigmoid", "tanh"])
 
 
 class Encoder(nn.Module):
@@ -61,10 +64,19 @@ class AttentionScores(NamedTuple):
 
 
 class Attention(AttentionModule):
-    def __init__(self, history_in_dim: int, context_dim: int, att_dim: int):
+    def __init__(
+        self,
+        history_in_dim: int,
+        context_dim: int,
+        att_dim: int,
+        scoring_activation: AttentionActivation = AttentionActivation.softmax,
+    ):
         super().__init__()
 
         self.context_dim = context_dim
+        self.scoring_activation = scoring_activation
+
+        print(scoring_activation)
 
         self.history = nn.Linear(history_in_dim, att_dim, bias=False)
         self.context = nn.Linear(context_dim, att_dim, bias=False)
@@ -79,13 +91,26 @@ class Attention(AttentionModule):
         score: Tensor = self.v(torch.tanh(history_att + context_att))
         if mask is not None:
             score = score.masked_fill(mask, float("-inf"))
-        score = torch.softmax(score, dim=1)
+
+        if self.scoring_activation == AttentionActivation.softmax:
+            score = torch.softmax(score, dim=1)
+        elif self.scoring_activation == AttentionActivation.sigmoid:
+            score = torch.sigmoid(score)
+        elif self.scoring_activation == AttentionActivation.tanh:
+            score = torch.tanh(score)
+
         if mask is not None:
             score = score.masked_fill(mask, 0.0)
 
         score = score.swapaxes(1, 2)
 
         att_applied = torch.bmm(score, history).squeeze(1)
+
+        if (
+            self.scoring_activation == AttentionActivation.sigmoid
+            or self.scoring_activation == AttentionActivation.tanh
+        ):
+            att_applied = torch.tanh(att_applied)
 
         return att_applied, score
 
