@@ -33,6 +33,7 @@ dependencies = [
     "speech-utils @ git+https://github.com/mattm458/speech-utils.git",
     "tensorboard==2.18.0",
     "torch==2.5.1",
+    "torchtext==0.18.0",
 ]
 
 [tool.setuptools.package-data]
