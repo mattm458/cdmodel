@@ -28,4 +28,3 @@ class ConversationData(NamedTuple):
     speaker_role_idx: Tensor
     role_speaker_assignment: list[dict[Role, int]]
     role_speaker_assignment_idx: list[dict[Role, int]]
-    role_gender_assignment: list[dict[Role, str]]

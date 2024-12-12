@@ -6,6 +6,7 @@ from typing import Final
 import pandas as pd
 import torch
 from torch import Tensor
+from torch.functional import F
 from torch.utils.data import Dataset
 
 from cdmodel.common import ConversationData
@@ -58,22 +59,6 @@ class ConversationDataset(Dataset):
         self.deterministic: Final[bool] = deterministic
         self.random = Random()
 
-        try:
-            self.calldata = pd.concat(
-                [
-                    pd.read_csv(path.join(dataset_dir, "fe_03_p1_calldata.tbl")),
-                    pd.read_csv(path.join(dataset_dir, "fe_03_p2_calldata.tbl")),
-                ]
-            ).reset_index(drop=True)
-
-            # TODO: Make this part of the preprocessing
-            self.pindata = pd.read_csv(
-                path.join(dataset_dir, "fe_03_pindata.tbl"), index_col="PIN"
-            )
-        except:
-            self.calldata = None
-            self.pindata = None
-
     def __len__(self) -> int:
         return len(self.conv_ids)
 
@@ -108,7 +93,7 @@ class ConversationDataset(Dataset):
 
         # Establish speaker roles
         if self.deterministic:
-            self.random.seed(conv_id)
+            self.random.seed(i)
         speaker_role, role_speaker_assignment = assign_speaker_roles(
             speaker_ids=speaker_id,
             role_type=self.role_type,
@@ -119,31 +104,6 @@ class ConversationDataset(Dataset):
         role_speaker_assignment_idx = {
             k: self.speaker_ids[v] for k, v in role_speaker_assignment.items()
         }
-        try:
-            role_speaker_assignment_gender = {}
-            for assignment, id in role_speaker_assignment.items():
-                gender_col = "ASX.DL"
-                rows = self.calldata[self.calldata.APIN == id]
-                if len(rows) == 0:
-                    gender_col = "BSX.DL"
-                    rows = self.calldata[self.calldata.BPIN == id]
-
-                role_speaker_assignment_gender[assignment] = (
-                    rows[gender_col].iloc[0].split(".")[0]
-                )
-            # role_speaker_assignment_gender = {
-            #     k: (
-            #         self.pindata.loc[v].S_SEX.lower()
-            #         if not self.pindata.loc[v].S_SEX.S_SEX.isna()
-            #         else "n"
-            #     )
-            #     for k, v in role_speaker_assignment.items()
-            # }
-        except:
-            pass
-            # for k, v in role_speaker_assignment.items():
-            #     print(v)
-            #     print(self.pindata.loc[v].S_SEX)
 
         segment_features_delta_sides: dict[Role, Tensor] = {}
         segment_features_delta_sides_len: dict[Role, list[int]] = {}
@@ -191,6 +151,16 @@ class ConversationDataset(Dataset):
             case _:
                 raise Exception("Oh no")
 
+        if self.zero_pad:
+            segment_features = F.pad(segment_features, (0, 0, 1, 0))
+            segment_features_delta = F.pad(segment_features_delta, (0, 0, 1, 0))
+            embeddings = F.pad(embeddings, (0, 0, 1, 0))
+            embeddings_turn_len = F.pad(embeddings_turn_len, (1, 0))
+            speaker_id = [0] + speaker_id
+            speaker_id_idx = F.pad(speaker_id_idx, (1, 0))
+            speaker_role = [None] + speaker_role
+            speaker_role_idx = F.pad(speaker_role_idx, (1, 0))
+
         return ConversationData(
             conv_id=[conv_id],
             segment_features=segment_features.unsqueeze(0),
@@ -207,5 +177,4 @@ class ConversationDataset(Dataset):
             speaker_role_idx=speaker_role_idx.unsqueeze(0),
             role_speaker_assignment=[role_speaker_assignment],
             role_speaker_assignment_idx=[role_speaker_assignment_idx],
-            role_gender_assignment=[role_speaker_assignment_gender],
         )
