@@ -16,25 +16,23 @@ classifiers = [
     "Operating System :: OS Independent",
 ]
 dependencies = [
-    "click==8.1.7",
-    "jsonargparse[signatures]==4.34.0",
+    "jsonargparse[signatures]==4.34.1",
     "lightning==2.4.0",
     "matplotlib==3.9.3",
     "mypy-extensions==1.0.0",
-    "numpy==2.1.3",
+    "numpy==2.2.0",
     "pandas==2.2.3",
     "pandas-stubs==2.2.3.241126",
     "pqdm==0.2.0",
     "praat-parselmouth==0.4.5",
     "pytest==8.3.4",
-    "scikit-learn==1.5.2",
+    "scikit-learn==1.6.0",
     "scipy==1.14.1",
     "seaborn==0.13.2",
     "speech-utils @ git+https://github.com/mattm458/speech-utils.git",
     "statsmodels==0.14.4",
     "tensorboard==2.18.0",
     "torch==2.5.1",
-    "torchtext==0.18.0",
 ]
 
 [tool.setuptools.package-data]
