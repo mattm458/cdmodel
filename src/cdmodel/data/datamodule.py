@@ -34,7 +34,7 @@ class ConversationDataModule(LightningDataModule):
         )
 
     def prepare_data(self) -> None:
-        pass
+        return
 
     def setup(self, stage: str) -> None:
         match stage:

@@ -21,7 +21,7 @@ from cdmodel.common.role_assignment import (
 
 def load_set_ids(dataset_dir: str, dataset_subset: str, set: str) -> list[int]:
     with open(path.join(dataset_dir, f"{set}-{dataset_subset}.csv")) as infile:
-        return [int(x) for x in infile.readlines() if len(x) > 0]
+        return [x.strip() for x in infile.readlines() if len(x) > 0]
 
 
 class ConversationDataset(Dataset):
