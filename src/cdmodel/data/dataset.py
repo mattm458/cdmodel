@@ -115,7 +115,7 @@ class ConversationDataset(Dataset):
             role_assignment_strategy=self.role_assignment_strategy,
             random=self.random,
         )
-        speaker_role_idx = torch.tensor([x.value for x in speaker_role[0]])
+        speaker_role_idx = torch.tensor([x.value for x in speaker_role])
         role_speaker_assignment_idx = {
             k: self.speaker_ids[v] for k, v in role_speaker_assignment.items()
         }
@@ -203,7 +203,7 @@ class ConversationDataset(Dataset):
             speaker_id=[speaker_id],
             speaker_id_idx=speaker_id_idx.unsqueeze(0),
             # TODO: Fix this type
-            speaker_role=speaker_role,
+            speaker_role=[speaker_role],
             speaker_role_idx=speaker_role_idx.unsqueeze(0),
             role_speaker_assignment=[role_speaker_assignment],
             role_speaker_assignment_idx=[role_speaker_assignment_idx],

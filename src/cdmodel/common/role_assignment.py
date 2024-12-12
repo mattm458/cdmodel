@@ -1,5 +1,6 @@
 from enum import Enum
 from random import Random
+from typing import Optional
 
 RoleAssignmentStrategy = Enum("RoleAssignmentStrategy", ["first", "second", "random"])
 # TODO lowercase these enum labels
@@ -20,11 +21,11 @@ class AnalysisRole(Role):
     b = 2
 
 
-def __get_speaker_role_assignment_ds(
+def _get_speaker_role_assignment_dataset(
     first_speaker_id: int,
     second_speaker_id: int,
     role_assignment_strategy: RoleAssignmentStrategy,
-    random: Random,
+    random: Optional[Random] = None,
 ) -> dict[int, DialogueSystemRole]:
     match role_assignment_strategy:
         case RoleAssignmentStrategy.first:
@@ -33,10 +34,18 @@ def __get_speaker_role_assignment_ds(
         case RoleAssignmentStrategy.second:
             first_role = DialogueSystemRole.partner
             second_role = DialogueSystemRole.agent
-        case _:  # Random strategy
+        case RoleAssignmentStrategy.random:
+            if random is None:
+                raise ValueError(
+                    "If using the random role assignment strategy, a Random instance must be provided"
+                )
             roles = [DialogueSystemRole.agent, DialogueSystemRole.partner]
             random.shuffle(roles)
             first_role, second_role = roles
+        case _:
+            raise NotImplementedError(
+                f"Unimplemented role assignment strategy '{role_assignment_strategy}'"
+            )
 
     return {
         first_speaker_id: first_role,
@@ -44,11 +53,11 @@ def __get_speaker_role_assignment_ds(
     }
 
 
-def __get_speaker_role_assignment_a(
+def _get_speaker_role_assignment_analysis(
     first_speaker_id: int,
     second_speaker_id: int,
     role_assignment_strategy: RoleAssignmentStrategy,
-    random: Random,
+    random: Optional[Random] = None,
 ) -> dict[int, AnalysisRole]:
     match role_assignment_strategy:
         case RoleAssignmentStrategy.first:
@@ -58,6 +67,11 @@ def __get_speaker_role_assignment_a(
             first_role = AnalysisRole.b
             second_role = AnalysisRole.a
         case _:  # Random strategy
+            if random is None:
+                raise ValueError(
+                    "If using the random role assignment strategy, a Random instance must be provided"
+                )
+
             roles = [AnalysisRole.a, AnalysisRole.b]
             random.shuffle(roles)
             first_role, second_role = roles
@@ -72,26 +86,32 @@ def assign_speaker_roles(
     speaker_ids: list[int],
     role_type: RoleType,
     role_assignment_strategy: RoleAssignmentStrategy,
-    random: Random,
-) -> tuple[list[list[Role]], dict[Role, int]]:
+    random: Optional[Random] = None,
+) -> tuple[list[Role], dict[Role, int]]:
     first_speaker_id = speaker_ids[0]
-    second_speaker_id = list(set(speaker_ids) - set([speaker_ids[0]]))[0]
+    second_speaker_id = list(set(speaker_ids) - set([first_speaker_id]))[0]
 
     match role_type:
         case RoleType.DialogueSystem:
-            assignments_ds = __get_speaker_role_assignment_ds(
-                first_speaker_id, second_speaker_id, role_assignment_strategy, random
+            assignments_dataset = _get_speaker_role_assignment_dataset(
+                first_speaker_id=first_speaker_id,
+                second_speaker_id=second_speaker_id,
+                role_assignment_strategy=role_assignment_strategy,
+                random=random,
             )
-            return [[assignments_ds[x] for x in speaker_ids]], {
-                v: k for k, v in assignments_ds.items()
+            return [assignments_dataset[x] for x in speaker_ids], {
+                v: k for k, v in assignments_dataset.items()
             }
 
         case RoleType.Analysis:
-            assignments_a = __get_speaker_role_assignment_a(
-                first_speaker_id, second_speaker_id, role_assignment_strategy, random
+            assignments_analysis = _get_speaker_role_assignment_analysis(
+                first_speaker_id=first_speaker_id,
+                second_speaker_id=second_speaker_id,
+                role_assignment_strategy=role_assignment_strategy,
+                random=random,
             )
-            return [[assignments_a[x] for x in speaker_ids]], {
-                v: k for k, v in assignments_a.items()
+            return [assignments_analysis[x] for x in speaker_ids], {
+                v: k for k, v in assignments_analysis.items()
             }
 
         case _:
