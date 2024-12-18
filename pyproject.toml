@@ -16,7 +16,7 @@ classifiers = [
     "Operating System :: OS Independent",
 ]
 dependencies = [
-    "jsonargparse[signatures]==4.34.1",
+    "jsonargparse[signatures]==4.35.0",
     "lightning==2.4.0",
     "matplotlib==3.10.0",
     "mypy-extensions==1.0.0",
