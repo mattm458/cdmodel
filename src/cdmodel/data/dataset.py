@@ -20,9 +20,9 @@ from cdmodel.common.role_assignment import (
 )
 
 
-def load_set_ids(dataset_dir: str, dataset_subset: str, set: str) -> list[int]:
-    with open(path.join(dataset_dir, f"{set}-{dataset_subset}.csv")) as infile:
-        return [x.strip() for x in infile.readlines() if len(x) > 0]
+def _load_segment_data(dataset_dir: str, conv_id: int) -> dict:
+    with open(path.join(dataset_dir, "segments", f"{conv_id}.json")) as infile:
+        return json.load(infile)
 
 
 class ConversationDataset(Dataset):
@@ -31,26 +31,19 @@ class ConversationDataset(Dataset):
         dataset_dir: str,
         segment_features: list[str],
         zero_pad: bool,
-        subset: str,
-        set: str,
         role_type: RoleType,
         role_assignment_strategy: RoleAssignmentStrategy,
+        conv_ids: list[int],
+        speaker_ids: dict[int, int],
         deterministic: bool = True,
     ):
         super().__init__()
 
         self.dataset_dir: Final[str] = dataset_dir
-        self.conv_ids: Final[list[int]] = load_set_ids(
-            dataset_dir=dataset_dir,
-            dataset_subset=subset,
-            set=set,
-        )
+        self.conv_ids: Final[list[int]] = conv_ids
         self.segment_features: Final[list[str]] = segment_features
         self.zero_pad: Final[bool] = zero_pad
-        self.speaker_ids: Final[dict[int, int]] = pd.read_csv(
-            path.join(dataset_dir, f"speaker-ids-{subset}.csv"),
-            index_col="speaker_id",
-        )["idx"].to_dict()
+        self.speaker_ids: Final[dict[int, int]] = speaker_ids
         self.role_type: Final[RoleType] = role_type
         self.role_assignment_strategy: Final[RoleAssignmentStrategy] = (
             role_assignment_strategy
@@ -64,9 +57,7 @@ class ConversationDataset(Dataset):
 
     def __getitem__(self, i: int) -> ConversationData:
         conv_id: Final[int] = self.conv_ids[i]
-
-        with open(path.join(self.dataset_dir, "segments", f"{conv_id}.json")) as infile:
-            conv_data: Final[dict] = json.load(infile)
+        conv_data: Final[dict] = _load_segment_data(self.dataset_dir, conv_id)
 
         segment_features: Tensor = torch.tensor(
             [conv_data[feature] for feature in self.segment_features]
@@ -154,8 +145,8 @@ class ConversationDataset(Dataset):
         if self.zero_pad:
             segment_features = F.pad(segment_features, (0, 0, 1, 0))
             segment_features_delta = F.pad(segment_features_delta, (0, 0, 1, 0))
-            embeddings = F.pad(embeddings, (0, 0, 1, 0))
-            embeddings_turn_len = F.pad(embeddings_turn_len, (1, 0))
+            embeddings = F.pad(embeddings, (0, 0, 0, 0, 1, 0))
+            embeddings_turn_len = F.pad(embeddings_turn_len, (1, 0), value=1)
             speaker_id = [0] + speaker_id
             speaker_id_idx = F.pad(speaker_id_idx, (1, 0))
             speaker_role = [None] + speaker_role
