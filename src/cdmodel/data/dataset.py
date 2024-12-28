@@ -25,6 +25,16 @@ def _load_segment_data(dataset_dir: str, conv_id: int) -> dict:
         return json.load(infile)
 
 
+def _load_embeddings(dataset_dir:str, conv_id:int),tuple[Tensor,Tensor]:
+    return torch.load(
+        path.join(dataset_dir, "embeddings", f"{conv_id}-embeddings.pt"),
+        weights_only=True,
+    ), torch.load(
+        path.join(dataset_dir, "embeddings", f"{conv_id}-lengths.pt"),
+        weights_only=True,
+    )
+
+
 class ConversationDataset(Dataset):
     def __init__(
         self,
@@ -57,23 +67,16 @@ class ConversationDataset(Dataset):
 
     def __getitem__(self, i: int) -> ConversationData:
         conv_id: Final[int] = self.conv_ids[i]
+
+        # Load conversation data from disk
         conv_data: Final[dict] = _load_segment_data(self.dataset_dir, conv_id)
+        embeddings, embeddings_turn_len = _load_embeddings(self.dataset_dir, conv_id)
 
         segment_features: Tensor = torch.tensor(
             [conv_data[feature] for feature in self.segment_features]
         ).swapaxes(0, 1)
         segment_features_delta = segment_features.diff(
             dim=0, prepend=torch.zeros(1, segment_features.shape[1])
-        )
-
-        embeddings: Tensor = torch.load(
-            path.join(self.dataset_dir, "embeddings", f"{conv_id}-embeddings.pt"),
-            weights_only=True,
-        )
-
-        embeddings_turn_len: Tensor = torch.load(
-            path.join(self.dataset_dir, "embeddings", f"{conv_id}-lengths.pt"),
-            weights_only=True,
         )
 
         speaker_id: list[int] = conv_data["speaker_id"]
