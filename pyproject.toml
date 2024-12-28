@@ -10,17 +10,17 @@ authors = [
 ]
 description = "description"
 readme = "README.md"
-requires-python = ">=3.12"
+requires-python = ">=3.13.1"
 classifiers = [
     "Programming Language :: Python :: 3",
     "Operating System :: OS Independent",
 ]
 dependencies = [
     "jsonargparse[signatures]==4.35.0",
-    "lightning==2.4.0",
+    "lightning==2.5.0.post0",
     "matplotlib==3.10.0",
     "mypy-extensions==1.0.0",
-    "numpy==2.2.0",
+    "numpy==2.2.1",
     "pandas==2.2.3",
     "pandas-stubs==2.2.3.241126",
     "pqdm==0.2.0",
