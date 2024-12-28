@@ -3,7 +3,6 @@ from os import path
 from random import Random
 from typing import Final
 
-import pandas as pd
 import torch
 from torch import Tensor
 from torch.functional import F
@@ -25,7 +24,7 @@ def _load_segment_data(dataset_dir: str, conv_id: int) -> dict:
         return json.load(infile)
 
 
-def _load_embeddings(dataset_dir:str, conv_id:int),tuple[Tensor,Tensor]:
+def _load_embeddings(dataset_dir: str, conv_id: int) -> tuple[Tensor, Tensor]:
     return torch.load(
         path.join(dataset_dir, "embeddings", f"{conv_id}-embeddings.pt"),
         weights_only=True,
