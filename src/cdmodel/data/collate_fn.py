@@ -28,7 +28,6 @@ def collate_fn(batches: list[ConversationData]) -> ConversationData:
     )
     role_speaker_assignment_all: Final[list[dict[Role, int]]] = []
     role_speaker_assignment_idx_all: Final[list[dict[Role, int]]] = []
-    role_gender_assignment_all: Final[list[dict[Role, str]]] = []
 
     # For padding embedding segments
     longest_embedding_segment: int = 0
@@ -46,7 +45,6 @@ def collate_fn(batches: list[ConversationData]) -> ConversationData:
         speaker_role_idx_all.append(batch.speaker_role_idx.squeeze(0))
         role_speaker_assignment_all.extend(batch.role_speaker_assignment)
         role_speaker_assignment_idx_all.extend(batch.role_speaker_assignment_idx)
-        role_gender_assignment_all.extend(batch.role_gender_assignment)
         max_embeddings_len: int = int(batch.embeddings_segment_len.max().item())
         if longest_embedding_segment < max_embeddings_len:
             longest_embedding_segment = max_embeddings_len
@@ -111,7 +109,6 @@ def collate_fn(batches: list[ConversationData]) -> ConversationData:
 
     role_speaker_assignment = role_speaker_assignment_all
     role_speaker_assignment_idx = role_speaker_assignment_idx_all
-    role_gender_assignment = role_gender_assignment_all
 
     return ConversationData(
         conv_id=conv_id,
@@ -128,5 +125,4 @@ def collate_fn(batches: list[ConversationData]) -> ConversationData:
         speaker_role_idx=speaker_role_idx,
         role_speaker_assignment=role_speaker_assignment,
         role_speaker_assignment_idx=role_speaker_assignment_idx,
-        role_gender_assignment=role_gender_assignment,
     )
