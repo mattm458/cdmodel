@@ -65,6 +65,9 @@ class ConversationDataset(Dataset):
         return len(self.conv_ids)
 
     def __getitem__(self, i: int) -> ConversationData:
+        if self.deterministic:
+            self.random.seed(i)
+
         conv_id: Final[int] = self.conv_ids[i]
 
         # Load conversation data from disk
@@ -85,8 +88,6 @@ class ConversationDataset(Dataset):
         )
 
         # Establish speaker roles
-        if self.deterministic:
-            self.random.seed(i)
         speaker_role, role_speaker_assignment = assign_speaker_roles(
             speaker_ids=speaker_id,
             role_type=self.role_type,
@@ -167,7 +168,6 @@ class ConversationDataset(Dataset):
             num_segments=[segment_features.shape[0]],
             speaker_id=[speaker_id],
             speaker_id_idx=speaker_id_idx.unsqueeze(0),
-            # TODO: Fix this type
             speaker_role=[speaker_role],
             speaker_role_idx=speaker_role_idx.unsqueeze(0),
             role_speaker_assignment=[role_speaker_assignment],
