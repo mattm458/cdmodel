@@ -152,7 +152,7 @@ class ConversationDataset(Dataset):
             segment_features_delta = F.pad(segment_features_delta, (0, 0, 1, 0))
             embeddings = F.pad(embeddings, (0, 0, 0, 0, 1, 0))
             embeddings_turn_len = F.pad(embeddings_turn_len, (1, 0), value=1)
-            speaker_id = [0] + speaker_id
+            speaker_id.insert(0, 0)
             speaker_id_idx = F.pad(speaker_id_idx, (1, 0))
             speaker_role.insert(0, None)
             speaker_role_idx = F.pad(speaker_role_idx, (1, 0))
