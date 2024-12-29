@@ -99,17 +99,21 @@ class CDModel(pl.LightningModule):
         role_type: str,
         lr: float,
         ext_ist_enabled: bool,  # Whether to enable ISTs (see below)
-        ext_ist_encoded_concat: bool,  # Whether to concatenate the IST with encoded input
-        ext_ist_att_in: bool,  # Whether to pass the IST into the attention layer
-        ext_ist_decoder_in: bool,  # Whether to pass the IST into the decoder
-        ext_ist_sides: str,  # Whether we should compute the IST for one side ("single") or both sides ("both").
-        ext_ist_style: str,  # Whether the IST should be computed at once from all conversational data ("one_shot"), computed incrementally as the conversation progresses ("incremental"), or both ("blended"). Blended mode is only available in dialogue system mode.
+        ext_ist_encoded_concat: bool = False,  # Whether to concatenate the IST with encoded input
+        ext_ist_att_in: bool = False,  # Whether to pass the IST into the attention layer
+        ext_ist_decoder_in: bool = False,  # Whether to pass the IST into the decoder
+        ext_ist_sides: Optional[
+            str
+        ] = None,  # Whether we should compute the IST for one side ("single") or both sides ("both").
+        ext_ist_style: Optional[
+            str
+        ] = None,  # Whether the IST should be computed at once from all conversational data ("one_shot"), computed incrementally as the conversation progresses ("incremental"), or both ("blended"). Blended mode is only available in dialogue system mode.
         ext_ist_objective_speaker_id: bool = False,  # Whether the IST token should be evaluated on its ability to predict the speaker ID during training
         ext_ist_objective_speaker_id_num: Optional[int] = None,
         ext_ist_token_dim: Optional[int] = None,  # The dimensionality of each IST token
         ext_ist_token_count: Optional[int] = None,  # The number of IST tokens
         ext_ist_encoder_dim: Optional[int] = None,  # The IST encoder output dimensions
-        ext_ist_att_activation: str = "softmax",
+        ext_ist_att_activation: Optional[str] = None,
     ):
         super().__init__()
         self.save_hyperparameters()
@@ -134,15 +138,21 @@ class CDModel(pl.LightningModule):
         ]
         del attention_style
 
-        self.ext_ist_sides: Final[ISTSides] = ISTSides[ext_ist_sides]
+        self.ext_ist_sides: Final[ISTSides | None] = (
+            ISTSides[ext_ist_sides] if ext_ist_sides is not None else None
+        )
         del ext_ist_sides
 
-        self.ext_ist_style: Final[ISTStyle] = ISTStyle[ext_ist_style]
+        self.ext_ist_style: Final[ISTStyle | None] = (
+            ISTStyle[ext_ist_style] if ext_ist_style is not None else None
+        )
         del ext_ist_style
 
-        self.ext_ist_att_activation: Final[AttentionActivation] = AttentionActivation[
-            ext_ist_att_activation
-        ]
+        self.ext_ist_att_activation: Final[AttentionActivation | None] = (
+            AttentionActivation[ext_ist_att_activation]
+            if ext_ist_att_activation is not None
+            else None
+        )
         del ext_ist_att_activation
 
         # Embedding Encoder
@@ -671,6 +681,8 @@ class CDModel(pl.LightningModule):
         return torch.optim.AdamW(self.parameters(), lr=self.lr)
 
     def training_step(self, batch: ConversationData, batch_idx: int) -> Tensor:
+        batch_size = batch.segment_features.shape[0]
+
         results = self(
             segment_features=batch.segment_features,
             segment_features_delta=batch.segment_features_delta,
@@ -690,7 +702,11 @@ class CDModel(pl.LightningModule):
         )
 
         self.log(
-            "training_loss", loss.detach(), on_epoch=True, on_step=True, sync_dist=True
+            "training_loss",
+            loss.detach(),
+            on_epoch=True,
+            on_step=True,
+            sync_dist=True,
         )
 
         if self.ext_ist_objective_speaker_id:
