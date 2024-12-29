@@ -93,7 +93,9 @@ class ConversationDataset(Dataset):
             role_assignment_strategy=self.role_assignment_strategy,
             random=self.random,
         )
-        speaker_role_idx = torch.tensor([x.value for x in speaker_role])
+        speaker_role_idx = torch.tensor(
+            [x.value if x is not None else 0 for x in speaker_role]
+        )
         role_speaker_assignment_idx = {
             k: self.speaker_ids[v] for k, v in role_speaker_assignment.items()
         }
@@ -151,7 +153,7 @@ class ConversationDataset(Dataset):
             embeddings_turn_len = F.pad(embeddings_turn_len, (1, 0), value=1)
             speaker_id = [0] + speaker_id
             speaker_id_idx = F.pad(speaker_id_idx, (1, 0))
-            speaker_role = [None] + speaker_role
+            speaker_role.insert(0, None)
             speaker_role_idx = F.pad(speaker_role_idx, (1, 0))
 
         return ConversationData(

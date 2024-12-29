@@ -87,7 +87,7 @@ def assign_speaker_roles(
     role_type: RoleType,
     role_assignment_strategy: RoleAssignmentStrategy,
     random: Optional[Random] = None,
-) -> tuple[list[Role], dict[Role, int]]:
+) -> tuple[list[Role | None], dict[Role, int]]:
     first_speaker_id = speaker_ids[0]
     second_speaker_id = list(set(speaker_ids) - set([first_speaker_id]))[0]
 

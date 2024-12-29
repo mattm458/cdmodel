@@ -24,7 +24,7 @@ class ConversationData(NamedTuple):
     # Speaker data
     speaker_id: list[list[int]]
     speaker_id_idx: Tensor
-    speaker_role: list[list[Role]]
+    speaker_role: list[list[Role | None]]
     speaker_role_idx: Tensor
     role_speaker_assignment: list[dict[Role, int]]
     role_speaker_assignment_idx: list[dict[Role, int]]
