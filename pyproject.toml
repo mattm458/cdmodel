@@ -16,11 +16,11 @@ classifiers = [
     "Operating System :: OS Independent",
 ]
 dependencies = [
-    "jsonargparse[signatures]==4.35.0",
+    "jsonargparse[signatures]==4.36.0",
     "lightning==2.5.0.post0",
     "matplotlib==3.10.0",
     "mypy-extensions==1.0.0",
-    "numpy==2.2.1",
+    "numpy==2.2.2",
     "pandas==2.2.3",
     "pandas-stubs==2.2.3.241126",
     "pqdm==0.2.0",
