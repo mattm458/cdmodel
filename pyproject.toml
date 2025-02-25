@@ -16,24 +16,25 @@ classifiers = [
     "Operating System :: OS Independent",
 ]
 dependencies = [
-    "jsonargparse[signatures]==4.36.0",
+    "jsonargparse[signatures]==4.37.0",
     "lightning==2.5.0.post0",
     "matplotlib==3.10.0",
     "mypy-extensions==1.0.0",
-    "numpy==2.2.2",
+    "numpy==2.2.3",
     "pandas==2.2.3",
     "pandas-stubs==2.2.3.241126",
     "pqdm==0.2.0",
     "praat-parselmouth==0.4.5",
     "pytest==8.3.4",
     "pytest-mock==3.14.0",
+    "pytest-cov==6.0.0",
     "scikit-learn==1.6.1",
-    "scipy==1.15.1",
+    "scipy==1.15.2",
     "seaborn==0.13.2",
     "speech-utils @ git+https://github.com/mattm458/speech-utils.git",
     "statsmodels==0.14.4",
-    "tensorboard==2.18.0",
-    "torch==2.5.1",
+    "tensorboard==2.19.0",
+    "torch==2.6.0",
 ]
 
 [tool.setuptools.package-data]
@@ -48,6 +49,7 @@ where = ["src"]
 
 [project.scripts]
 cdmodel = "cdmodel.main:cli_main"
+analysis = "cdmodel.analysis_main:cli_analysis"
 
 [tool.pytest.ini_options]
 addopts = [
