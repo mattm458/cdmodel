@@ -10,7 +10,7 @@ from torch.nn import functional as F
 
 from cdmodel.common.data import ConversationData, Role
 from cdmodel.common.model import ISTSides, ISTStyle
-from cdmodel.common.role_assignment import DialogueSystemRole, RoleType
+from cdmodel.common.role_assignment import AgentPartnerPredictionRole, PredictionType
 from cdmodel.model.components.components import (
     AttentionActivation,
     Decoder,
@@ -74,6 +74,7 @@ CDPredictionStrategy = Enum("CDPredictionStrategy", ["both", "agent"])
 SpeakerRoleEncoding = Enum("SpeakerRoleEncoding", ["one_hot"])
 CDAttentionStyle = Enum("CDAttentionStyle", ["dual", "single_both", "single_partner"])
 ISTAttentionStyle = Enum("ISTAttentionStyle", ["multi_head", "additive"])
+CDModelPredictFormat = Enum("CDModelPredictFormat", ["value", "delta"])
 
 
 class CDModel(pl.LightningModule):
@@ -98,6 +99,7 @@ class CDModel(pl.LightningModule):
         speaker_role_encoding: str,
         role_type: str,
         lr: float,
+        predict_format: str,
         ext_ist_enabled: bool,  # Whether to enable ISTs (see below)
         ext_ist_encoded_concat: bool = False,  # Whether to concatenate the IST with encoded input
         ext_ist_att_in: bool = False,  # Whether to pass the IST into the attention layer
@@ -114,6 +116,13 @@ class CDModel(pl.LightningModule):
         ext_ist_token_count: Optional[int] = None,  # The number of IST tokens
         ext_ist_encoder_dim: Optional[int] = None,  # The IST encoder output dimensions
         ext_ist_att_activation: Optional[str] = None,
+        ext_ist_use_feature_deltas: bool = True,
+        ext_ist_use_feature_values: bool = False,
+        ext_ist_tanh_pre: bool = True,  # Whether to apply tanh activation to IST tokens before attention
+        ext_ist_tanh_post: bool = False,  # Whether to apply tanh activation to IST embeddings after attention
+        ext_ist_offset: Optional[
+            Tensor
+        ] = None,  # Optional offsets to apply to IST weights for testing
     ):
         super().__init__()
         self.save_hyperparameters()
@@ -123,6 +132,11 @@ class CDModel(pl.LightningModule):
         self.feature_names: Final[list[str]] = feature_names
         self.num_features: Final[int] = len(feature_names)
 
+        self.output_format: Final[CDModelPredictFormat] = CDModelPredictFormat[
+            predict_format
+        ]
+        del predict_format
+
         self.speaker_role_encoding: Final[SpeakerRoleEncoding] = SpeakerRoleEncoding[
             speaker_role_encoding
         ]
@@ -131,7 +145,7 @@ class CDModel(pl.LightningModule):
             prediction_strategy
         ]
         del prediction_strategy
-        self.role_type: Final[RoleType] = RoleType[role_type]
+        self.role_type: Final[PredictionType] = PredictionType[role_type]
         del role_type
         self.attention_style: Final[CDAttentionStyle] = CDAttentionStyle[
             attention_style
@@ -154,6 +168,8 @@ class CDModel(pl.LightningModule):
             else None
         )
         del ext_ist_att_activation
+
+        self.ext_ist_offset: Final[Tensor | None] = ext_ist_offset
 
         # Embedding Encoder
         # =====================
@@ -350,6 +366,7 @@ class CDModel(pl.LightningModule):
                 ist_sides=self.ext_ist_sides,
                 ist_style=self.ext_ist_style,
             )
+
             # TODO: Clean up these requirements - I added a few new configuration options but they
             # aren't being covered here
             if ext_ist_token_count is None:
@@ -363,26 +380,30 @@ class CDModel(pl.LightningModule):
                     "If ISTs are enabled, ext_ist_encoder_dim cannot be None"
                 )
 
-            self.ext_ist_tokens = nn.Parameter(
-                torch.randn(ext_ist_token_count, ext_ist_token_dim), requires_grad=True
-            )
-
             if (
                 self.ext_ist_style == ISTStyle.one_shot
                 or self.ext_ist_style == ISTStyle.blended
             ):
                 self.ext_ist_encoder_one_shot = ISTOneShotEncoder(
+                    token_count=ext_ist_token_count,
                     token_dim=ext_ist_token_dim,
                     num_features=self.num_features,
                     att_dim=ext_ist_token_dim,
                     att_activation=self.ext_ist_att_activation,
+                    ext_ist_use_feature_deltas=ext_ist_use_feature_deltas,
+                    ext_ist_use_feature_values=ext_ist_use_feature_values,
+                    ext_ist_tanh_pre=ext_ist_tanh_pre,
+                    ext_ist_tanh_post=ext_ist_tanh_post,
                 )
             if self.ext_ist_style == ISTStyle.blended:
                 self.ext_ist_encoder_incremental = ISTIncrementalEncoder(
+                    token_count=ext_ist_token_count,
                     token_dim=ext_ist_token_dim,
                     num_features=self.num_features,
                     att_dim=ext_ist_token_dim,
                     att_activation=self.ext_ist_att_activation,
+                    ext_ist_tanh_pre=ext_ist_tanh_pre,
+                    ext_ist_tanh_post=ext_ist_tanh_post,
                 )
 
             if ext_ist_objective_speaker_id and ext_ist_objective_speaker_id_num:
@@ -395,8 +416,12 @@ class CDModel(pl.LightningModule):
         self,
         segment_features: Tensor,
         segment_features_delta: Tensor,
+        segment_features_sides: dict[Role, Tensor],
+        segment_features_sides_len: dict[Role, list[int]],
         segment_features_delta_sides: dict[Role, Tensor],
-        segment_features_delta_sides_len: dict[Role, list[int]],
+        predict_next: Tensor,
+        history_mask_a: Tensor,
+        history_mask_b: Tensor,
         embeddings: Tensor,
         embeddings_len: Tensor,
         conv_len: list[int],
@@ -420,13 +445,6 @@ class CDModel(pl.LightningModule):
                 f"Unsupported speaker role encoding {self.speaker_role_encoding}"
             )
 
-        if self.role_type == RoleType.DialogueSystem:
-            predict_next = (speaker_role_idx == DialogueSystemRole.agent.value)[:, 1:]
-            a_history_mask = speaker_role_idx == DialogueSystemRole.agent.value
-            b_history_mask = speaker_role_idx == DialogueSystemRole.partner.value
-        else:
-            raise NotImplementedError(f"Unsupported role type {self.role_type}")
-
         predict_next_segmented = timestep_split(predict_next)
         speaker_role_idx_segmented = timestep_split(speaker_role_idx)
         speaker_role_encoded_segmented = timestep_split(speaker_role_encoded)
@@ -434,6 +452,8 @@ class CDModel(pl.LightningModule):
         predict_next_segmented = timestep_split(predict_next)
         embeddings_encoded_segmented = timestep_split(embeddings_encoded)
         segment_features_delta_segmented = timestep_split(segment_features_delta)
+
+        features_input_arr: list[Tensor] = []
 
         # Create initial zero hidden states for the encoder and decoder(s)
         encoder_hidden: list[Tensor] = self.encoder.get_hidden(
@@ -471,9 +491,10 @@ class CDModel(pl.LightningModule):
                 role_type=self.role_type,
                 ist_sides=self.ext_ist_sides,
                 ist_style=self.ext_ist_style,
+                segment_features_sides=segment_features_sides,
                 segment_features_delta_sides=segment_features_delta_sides,
-                segment_features_delta_sides_len=segment_features_delta_sides_len,
-                tokens=self.ext_ist_tokens,
+                segment_features_sides_len=segment_features_sides_len,
+                offset=self.ext_ist_offset,
             )
 
         ext_ist_incremental_h: Tensor | None = None
@@ -503,16 +524,36 @@ class CDModel(pl.LightningModule):
             # (i.e., teacher forcing)
             autoregress_mask_i = predict_prev * is_autoregressive
             features_i = features_arr[i].clone()
-            features_i[autoregress_mask_i] = (
-                features_prev[autoregress_mask_i]
-                .detach()
-                .clone()
-                .type(features_i.dtype)
-            )
+
+            if self.output_format == CDModelPredictFormat.value:
+                features_i[autoregress_mask_i] = (
+                    features_prev[autoregress_mask_i]
+                    .detach()
+                    .clone()
+                    .type(features_i.dtype)
+                )
+            elif self.output_format == CDModelPredictFormat.delta:
+                if i > 0:
+                    features_i[autoregress_mask_i] = features_input_arr[i - 1][
+                        autoregress_mask_i
+                    ] + features_prev[autoregress_mask_i].detach().type(
+                        features_i.dtype
+                    )
+                else:
+                    features_i[autoregress_mask_i] = (
+                        features_prev[autoregress_mask_i]
+                        .detach()
+                        .clone()
+                        .type(features_i.dtype)
+                    )
+            else:
+                raise NotImplementedError(self.output_format)
+
+            features_input_arr.append(features_i)
 
             # If we're using the incremental IST encoder, encode now
             if (
-                self.ext_ist_encoder_incremental
+                self.ext_ist_encoder_incremental is not None
                 and ext_ist_incremental_h is not None
                 and ext_ist_incremental_accumulator is not None
             ):
@@ -526,7 +567,6 @@ class CDModel(pl.LightningModule):
                         features_delta=segment_features_delta_segmented[i],
                         accumulator=ext_ist_incremental_accumulator,
                         h=ext_ist_incremental_h,
-                        tokens=self.ext_ist_tokens,
                     )
                 )
 
@@ -590,8 +630,8 @@ class CDModel(pl.LightningModule):
                 #     speaker_id_idx_history_is_nonzero
                 # )
             elif self.attention_sides == "role":
-                a_mask = a_history_mask[:, : i + 1]
-                b_mask = b_history_mask[:, : i + 1]
+                a_mask = history_mask_a[:, : i + 1]
+                b_mask = history_mask_b[:, : i + 1]
 
             for decoder_idx, (attention, h, decoder) in enumerate(
                 zip(
@@ -686,8 +726,12 @@ class CDModel(pl.LightningModule):
         results = self(
             segment_features=batch.segment_features,
             segment_features_delta=batch.segment_features_delta,
+            segment_features_sides=batch.segment_features_sides,
             segment_features_delta_sides=batch.segment_features_delta_sides,
-            segment_features_delta_sides_len=batch.segment_features_delta_sides_len,
+            segment_features_sides_len=batch.segment_features_sides_len,
+            predict_next=batch.predict_next,
+            history_mask_a=batch.history_mask_a,
+            history_mask_b=batch.history_mask_b,
             embeddings=batch.embeddings,
             embeddings_len=batch.embeddings_segment_len,
             conv_len=batch.num_segments,
@@ -695,18 +739,32 @@ class CDModel(pl.LightningModule):
             is_autoregressive=True,
         )
 
-        y = batch.segment_features[:, 1:]
+        if batch_idx == 0 and results.ist_weights_one_shot is not None:
+            for role, weights in results.ist_weights_one_shot.items():
+                # Dimension 0: Batch size
+                # Dimension 1: Number of tokens
+                for weight_i in range(weights.shape[1]):
+                    self.logger.experiment.add_histogram(
+                        f"training_ext_ist_weight_{role}_{weight_i}",
+                        weights[:, weight_i].detach(),
+                        global_step=self.current_epoch,
+                    )
+
+        if self.output_format == CDModelPredictFormat.value:
+            y = batch.segment_features[:, 1:]
+        elif self.output_format == CDModelPredictFormat.delta:
+            y = batch.segment_features_delta[:, 1:]
+        else:
+            raise NotImplementedError(
+                f"Output format {self.output_format} not supported!"
+            )
         loss = F.mse_loss(
             results.predicted_segment_features[results.predict_next],
             y[results.predict_next],
         )
 
         self.log(
-            "training_loss",
-            loss.detach(),
-            on_epoch=True,
-            on_step=True,
-            sync_dist=True,
+            "training_loss", loss.detach(), on_epoch=True, on_step=True, sync_dist=True
         )
 
         if self.ext_ist_objective_speaker_id:
@@ -714,7 +772,7 @@ class CDModel(pl.LightningModule):
                 results.ext_ist_pred_speaker_id,
                 torch.tensor(
                     [
-                        x[DialogueSystemRole.agent]
+                        x[AgentPartnerPredictionRole.agent]
                         for x in batch.role_speaker_assignment_idx
                     ],
                     device=results.ext_ist_pred_speaker_id.device,
@@ -763,8 +821,11 @@ class CDModel(pl.LightningModule):
         results = self(
             segment_features=batch.segment_features,
             segment_features_delta=batch.segment_features_delta,
+            segment_features_sides=batch.segment_features_sides,
             segment_features_delta_sides=batch.segment_features_delta_sides,
-            segment_features_delta_sides_len=batch.segment_features_delta_sides_len,
+            segment_features_sides_len=batch.segment_features_sides_len,            predict_next=batch.predict_next,
+            history_mask_a=batch.history_mask_a,
+            history_mask_b=batch.history_mask_b,
             embeddings=batch.embeddings,
             embeddings_len=batch.embeddings_segment_len,
             conv_len=batch.num_segments,
@@ -772,7 +833,26 @@ class CDModel(pl.LightningModule):
             is_autoregressive=True,
         )
 
-        y = batch.segment_features[:, 1:]
+        if batch_idx == 0 and results.ist_weights_one_shot is not None:
+            for role, weights in results.ist_weights_one_shot.items():
+                # Dimension 0: Batch size
+                # Dimension 1: Number of tokens
+                for weight_i in range(weights.shape[1]):
+                    self.logger.experiment.add_histogram(
+                        f"validation_ext_ist_weight_{role}_{weight_i}",
+                        weights[:, weight_i],
+                        global_step=self.current_epoch,
+                    )
+
+        if self.output_format == CDModelPredictFormat.value:
+            y = batch.segment_features[:, 1:]
+        elif self.output_format == CDModelPredictFormat.delta:
+            y = batch.segment_features_delta[:, 1:]
+
+        else:
+            raise NotImplementedError(
+                f"Output format {self.output_format} not supported!"
+            )
         loss = F.mse_loss(
             results.predicted_segment_features[results.predict_next],
             y[results.predict_next],
@@ -792,7 +872,7 @@ class CDModel(pl.LightningModule):
                 results.ext_ist_pred_speaker_id,
                 torch.tensor(
                     [
-                        x[DialogueSystemRole.agent]
+                        x[AgentPartnerPredictionRole.agent]
                         for x in batch.role_speaker_assignment_idx
                     ],
                     device=results.ext_ist_pred_speaker_id.device,
@@ -825,18 +905,42 @@ class CDModel(pl.LightningModule):
 
         return loss
 
-    def predict_step(self, batch: ConversationData, batch_idx: int):
-        return self(
+    def predict_step(
+        self, batch: ConversationData, batch_idx: int, dataloader_idx: int = 0
+    ):
+        results = self(
             segment_features=batch.segment_features,
             segment_features_delta=batch.segment_features_delta,
+            segment_features_sides=batch.segment_features_sides,
             segment_features_delta_sides=batch.segment_features_delta_sides,
-            segment_features_delta_sides_len=batch.segment_features_delta_sides_len,
+            segment_features_sides_len=batch.segment_features_sides_len,            predict_next=batch.predict_next,
+            history_mask_a=batch.history_mask_a,
+            history_mask_b=batch.history_mask_b,
             embeddings=batch.embeddings,
             embeddings_len=batch.embeddings_segment_len,
             conv_len=batch.num_segments,
             speaker_role_idx=batch.speaker_role_idx,
             is_autoregressive=True,
         )
+
+        if self.output_format == CDModelPredictFormat.value:
+            y = batch.segment_features[:, 1:]
+        elif self.output_format == CDModelPredictFormat.delta:
+            y = batch.segment_features_delta[:, 1:]
+        else:
+            raise NotImplementedError(
+                f"Output format {self.output_format} not supported!"
+            )
+        loss = F.mse_loss(
+            results.predicted_segment_features[results.predict_next],
+            y[results.predict_next],
+        )
+        loss_l1 = F.smooth_l1_loss(
+            results.predicted_segment_features[results.predict_next],
+            y[results.predict_next],
+        )
+
+        return batch, loss, loss_l1, results
 
     def on_train_epoch_end(self):
         for name, parameter in self.named_parameters():

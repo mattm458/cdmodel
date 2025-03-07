@@ -1,7 +1,7 @@
+from enum import Enum
 from typing import Literal, NamedTuple, Optional
 
 import torch
-from enum import Enum
 from torch import Tensor, nn
 
 from cdmodel.model.util.util import lengths_to_mask
@@ -83,7 +83,11 @@ class Attention(AttentionModule):
         self.v = nn.Linear(att_dim, 1, bias=False)
 
     def forward(
-        self, history: Tensor, context: Tensor, mask: Optional[Tensor] = None
+        self,
+        history: Tensor,
+        context: Tensor,
+        mask: Optional[Tensor] = None,
+        weight_offset: Optional[Tensor] = None,
     ) -> tuple[Tensor, Tensor]:
         history_att: Tensor = self.history(history)
         context_att: Tensor = self.context(context).unsqueeze(1)
@@ -104,13 +108,10 @@ class Attention(AttentionModule):
 
         score = score.swapaxes(1, 2)
 
-        att_applied = torch.bmm(score, history).squeeze(1)
+        if weight_offset is not None:
+            score += weight_offset
 
-        if (
-            self.scoring_activation == AttentionActivation.sigmoid
-            or self.scoring_activation == AttentionActivation.tanh
-        ):
-            att_applied = torch.tanh(att_applied)
+        att_applied = torch.bmm(score, history).squeeze(1)
 
         return att_applied, score
 

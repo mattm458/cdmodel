@@ -5,7 +5,7 @@ import pandas as pd
 from lightning import LightningDataModule
 from torch.utils.data import DataLoader
 
-from cdmodel.common.role_assignment import RoleAssignmentStrategy, RoleType
+from cdmodel.common.role_assignment import RoleAssignmentStrategy, PredictionType
 from cdmodel.data.collate_fn import collate_fn
 from cdmodel.data.dataset import ConversationDataset
 
@@ -26,6 +26,8 @@ class ConversationDataModule(LightningDataModule):
         num_workers: int,
         role_type: str,
         role_assignment_strategy: str,
+        shuffle_training: bool = True,
+        drop_last_training: bool = True,
     ):
         super().__init__()
 
@@ -35,7 +37,15 @@ class ConversationDataModule(LightningDataModule):
         self.zero_pad: Final[bool] = zero_pad
         self.batch_size: Final[int] = batch_size
         self.num_workers: Final[int] = num_workers
-        self.role_type: Final[RoleType] = RoleType[role_type]
+        self.role_type: Final[PredictionType] = PredictionType[role_type]
+        self.shuffle_training: Final[bool] = shuffle_training
+        self.drop_last_training: Final[bool] = drop_last_training
+
+        if role_assignment_strategy == "random":
+            raise NotImplementedError(
+                "'random' role assignment strategy has been removed in favor of 'both'"
+            )
+
         self.role_assignment_strategy: Final[RoleAssignmentStrategy] = (
             RoleAssignmentStrategy[role_assignment_strategy]
         )
@@ -62,7 +72,6 @@ class ConversationDataModule(LightningDataModule):
                         set="train",
                     ),
                     speaker_ids=self.speaker_ids,
-                    deterministic=False,
                 )
                 self.dataset_validate = ConversationDataset(
                     dataset_dir=self.dataset_dir,
@@ -76,7 +85,6 @@ class ConversationDataModule(LightningDataModule):
                         set="val",
                     ),
                     speaker_ids=self.speaker_ids,
-                    deterministic=True,
                 )
             case "validate":
                 self.dataset_validate = ConversationDataset(
@@ -91,7 +99,6 @@ class ConversationDataModule(LightningDataModule):
                         set="val",
                     ),
                     speaker_ids=self.speaker_ids,
-                    deterministic=True,
                 )
             case "test":
                 self.dataset_test = ConversationDataset(
@@ -106,7 +113,6 @@ class ConversationDataModule(LightningDataModule):
                         set="test",
                     ),
                     speaker_ids=self.speaker_ids,
-                    deterministic=True,
                 )
             case "predict":
                 self.dataset_predict = ConversationDataset(
@@ -121,7 +127,6 @@ class ConversationDataModule(LightningDataModule):
                         set="test",
                     ),
                     speaker_ids=self.speaker_ids,
-                    deterministic=True,
                 )
 
     def train_dataloader(self) -> DataLoader:
@@ -129,8 +134,8 @@ class ConversationDataModule(LightningDataModule):
             self.dataset_train,
             collate_fn=collate_fn,
             batch_size=self.batch_size,
-            shuffle=True,
-            drop_last=True,
+            shuffle=self.shuffle_training,
+            drop_last=self.drop_last_training,
             pin_memory=True,
             num_workers=self.num_workers,
             persistent_workers=True,

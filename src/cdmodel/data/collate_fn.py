@@ -20,14 +20,21 @@ def collate_fn(batches: list[ConversationData]) -> ConversationData:
     speaker_id_idx_all: Final[list[Tensor]] = []
     speaker_role_all: Final[list[list[Role]]] = []
     speaker_role_idx_all: Final[list[Tensor]] = []
-    segment_features_delta_sides_all: Final[defaultdict[Role, list[Tensor]]] = (
-        defaultdict(list)
+    segment_features_sides_all: Final[defaultdict[Role, list[Tensor]]] = defaultdict(
+        list
     )
-    segment_features_delta_sides_len_all: Final[defaultdict[Role, list[int]]] = (
+    segment_features_sides_len_all: Final[defaultdict[Role, list[int]]] = defaultdict(
+        list
+    )
+    segment_features_delta_sides_all: Final[defaultdict[Role, list[Tensor]]] = (
         defaultdict(list)
     )
     role_speaker_assignment_all: Final[list[dict[Role, int]]] = []
     role_speaker_assignment_idx_all: Final[list[dict[Role, int]]] = []
+
+    predict_next_all: Final[list[Tensor]] = []
+    history_mask_a_all: Final[list[Tensor]] = []
+    history_mask_b_all: Final[list[Tensor]] = []
 
     # For padding embedding segments
     longest_embedding_segment: int = 0
@@ -49,11 +56,18 @@ def collate_fn(batches: list[ConversationData]) -> ConversationData:
         if longest_embedding_segment < max_embeddings_len:
             longest_embedding_segment = max_embeddings_len
 
+        for role, t in batch.segment_features_sides.items():
+            segment_features_sides_all[role].append(t.squeeze(0))
+
+        for role, t_len in batch.segment_features_sides_len.items():
+            segment_features_sides_len_all[role].extend(t_len)
+
         for role, t in batch.segment_features_delta_sides.items():
             segment_features_delta_sides_all[role].append(t.squeeze(0))
 
-        for role, t_len in batch.segment_features_delta_sides_len.items():
-            segment_features_delta_sides_len_all[role].extend(t_len)
+        predict_next_all.append(batch.predict_next.squeeze(0))
+        history_mask_a_all.append(batch.history_mask_a.squeeze(0))
+        history_mask_b_all.append(batch.history_mask_b.squeeze(0))
 
     conv_id: Final[list[int]] = conv_id_all
 
@@ -65,15 +79,21 @@ def collate_fn(batches: list[ConversationData]) -> ConversationData:
         segment_features_delta_all, batch_first=True
     )
 
+    segment_features_sides: Final[dict[Role, Tensor]] = {}
+    for role, t_list in segment_features_sides_all.items():
+        segment_features_sides[role] = nn.utils.rnn.pad_sequence(
+            t_list, batch_first=True
+        )
+
+    segment_features_sides_len: Final[dict[Role, list[int]]] = dict(
+        segment_features_sides_len_all
+    )
+
     segment_features_delta_sides: Final[dict[Role, Tensor]] = {}
     for role, t_list in segment_features_delta_sides_all.items():
         segment_features_delta_sides[role] = nn.utils.rnn.pad_sequence(
             t_list, batch_first=True
         )
-
-    segment_features_delta_sides_len: Final[dict[Role, list[int]]] = dict(
-        segment_features_delta_sides_len_all
-    )
 
     # Embeddings are stored in a 3-dimensional tensor with the following dimensions:
     #
@@ -110,12 +130,17 @@ def collate_fn(batches: list[ConversationData]) -> ConversationData:
     role_speaker_assignment = role_speaker_assignment_all
     role_speaker_assignment_idx = role_speaker_assignment_idx_all
 
+    predict_next = nn.utils.rnn.pad_sequence(predict_next_all, batch_first=True)
+    history_mask_a = nn.utils.rnn.pad_sequence(history_mask_a_all, batch_first=True)
+    history_mask_b = nn.utils.rnn.pad_sequence(history_mask_b_all, batch_first=True)
+
     return ConversationData(
         conv_id=conv_id,
         segment_features=segment_features,
         segment_features_delta=segment_features_delta,
+        segment_features_sides=segment_features_sides,
+        segment_features_sides_len=segment_features_sides_len,
         segment_features_delta_sides=segment_features_delta_sides,
-        segment_features_delta_sides_len=segment_features_delta_sides_len,
         embeddings=embeddings,
         embeddings_segment_len=embeddings_segment_len,
         num_segments=num_segments,
@@ -125,4 +150,7 @@ def collate_fn(batches: list[ConversationData]) -> ConversationData:
         speaker_role_idx=speaker_role_idx,
         role_speaker_assignment=role_speaker_assignment,
         role_speaker_assignment_idx=role_speaker_assignment_idx,
+        predict_next=predict_next,
+        history_mask_a=history_mask_a,
+        history_mask_b=history_mask_b,
     )

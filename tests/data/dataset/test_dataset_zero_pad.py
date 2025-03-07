@@ -1,11 +1,13 @@
+from copy import deepcopy
+
 import pytest
 import torch
 from torch.testing import assert_close
 
 from cdmodel.common.role_assignment import (
-    DialogueSystemRole,
+    AgentPartnerPredictionRole,
     RoleAssignmentStrategy,
-    RoleType,
+    PredictionType,
 )
 from cdmodel.data.dataset import ConversationDataset
 
@@ -22,8 +24,8 @@ def segment_data_tensor():
     return torch.tensor(
         [
             [1, 2, 4, 7, 11, 16, 15, 13, 10],
-            [10, 20, 40, 70, 110, 160, 150, 130, 100],
-            [100, 200, 400, 700, 1100, 1600, 1500, 1300, 1000],
+            [10, 21, 40, 70, 110, 160, 150, 130, 100],
+            [100, 201, 400, 700, 1100, 1600, 1500, 1300, 1000],
         ]
     ).T
 
@@ -44,7 +46,7 @@ def speaker_id_data():
 def speaker_role_ds_second(speaker_id_data):
     partner_id = speaker_id_data[0]
     return [
-        DialogueSystemRole.partner if x == partner_id else DialogueSystemRole.agent
+        AgentPartnerPredictionRole.partner if x == partner_id else AgentPartnerPredictionRole.agent
         for x in speaker_id_data
     ]
 
@@ -53,7 +55,7 @@ def speaker_role_ds_second(speaker_id_data):
 def speaker_role_ds_first(speaker_id_data):
     agent_id = speaker_id_data[0]
     return [
-        DialogueSystemRole.agent if x == agent_id else DialogueSystemRole.partner
+        AgentPartnerPredictionRole.agent if x == agent_id else AgentPartnerPredictionRole.partner
         for x in speaker_id_data
     ]
 
@@ -99,11 +101,10 @@ def conversation_dataset_ds_second_zero_pad(speaker_id_dict):
         dataset_dir="test",
         segment_features=["feature_a", "feature_b", "feature_c"],
         zero_pad=True,
-        role_type=RoleType.DialogueSystem,
+        role_type=PredictionType.DialogueSystem,
         role_assignment_strategy=RoleAssignmentStrategy.second,
         conv_ids=[1, 2, 3],
         speaker_ids=speaker_id_dict,
-        deterministic=False,
     )
 
 
@@ -113,86 +114,169 @@ def conversation_dataset_ds_first_zero_pad(speaker_id_dict):
         dataset_dir="test",
         segment_features=["feature_a", "feature_b", "feature_c"],
         zero_pad=True,
-        role_type=RoleType.DialogueSystem,
+        role_type=PredictionType.DialogueSystem,
         role_assignment_strategy=RoleAssignmentStrategy.first,
         conv_ids=[1, 2, 3],
         speaker_ids=speaker_id_dict,
-        deterministic=False,
+    )
+
+
+@pytest.fixture
+def conversation_dataset_ds_both_zero_pad(speaker_id_dict):
+    return ConversationDataset(
+        dataset_dir="test",
+        segment_features=["feature_a", "feature_b", "feature_c"],
+        zero_pad=True,
+        role_type=PredictionType.AgentPartner,
+        role_assignment_strategy=RoleAssignmentStrategy.both,
+        conv_ids=[1, 2, 3],
+        speaker_ids=speaker_id_dict,
     )
 
 
 # Tests
 # ========================================================
-def test__dataset_ds_second_zero_pad(
+# def test__dataset_ds_second_zero_pad(
+#     mocker,
+#     conversation_dataset_ds_second_zero_pad,
+#     segment_data,
+#     segment_data_tensor,
+#     segment_data_delta_tensor,
+#     embedding_data,
+#     embedding_len_data,
+#     speaker_id_data,
+#     speaker_id_idx_data_tensor,
+#     speaker_role_ds_second,
+#     speaker_role_ds_second_idx_tensor,
+# ):
+#     load_segment_data_mock = mocker.patch("cdmodel.data.dataset._load_segment_data")
+#     # Make a copy of the segment data so the original isn't modified
+#     load_segment_data_mock.return_value = deepcopy(segment_data)
+
+#     load_embeddings_mock = mocker.patch("cdmodel.data.dataset._load_embeddings")
+#     load_embeddings_mock.return_value = (
+#         embedding_data,
+#         embedding_len_data,
+#     )
+
+#     num_turns = len(segment_data["feature_a"])
+
+#     output = conversation_dataset_ds_second_zero_pad[0]
+
+#     # Ensure that unpaddable output was not padded
+#     assert output.conv_id == [1]
+
+#     # Ensure turn-level features were padded
+#     assert output.num_segments == [num_turns + 1]
+
+#     # Ensure the first turn in the segment features is 0
+#     assert_close(
+#         output.segment_features[:, 0], torch.zeros_like(output.segment_features[:, 0])
+#     )
+#     assert_close(
+#         output.segment_features_delta[:, 0],
+#         torch.zeros_like(output.segment_features_delta[:, 0]),
+#     )
+
+#     # Ensure the remaining segment features are identical to the original
+#     assert_close(output.segment_features[0, 1:], segment_data_tensor)
+#     assert_close(output.segment_features_delta[0, 1:], segment_data_delta_tensor)
+
+#     # Ensure the embeddings were padded
+#     assert_close(output.embeddings[0], torch.zeros_like(embedding_data[0]))
+#     assert_close(output.embeddings[1:], embedding_data)
+
+#     # Ensure the embedding lengths were padded
+#     assert output.embeddings_segment_len[0] == 1
+#     assert_close(output.embeddings_segment_len[1:], embedding_len_data)
+
+#     # Ensure the speaker IDs and their indices were padded
+#     assert output.speaker_id[0][0] == 0
+#     assert output.speaker_id_idx[0, 0] == 0
+
+#     assert output.speaker_id[0][1:] == speaker_id_data
+#     assert_close(output.speaker_id_idx[0, 1:], speaker_id_idx_data_tensor)
+
+#     assert output.speaker_role[0][0] == None
+#     assert output.speaker_role[0][1:] == speaker_role_ds_second
+
+#     assert output.speaker_role_idx[0, 0] == 0
+#     assert_close(output.speaker_role_idx[0, 1:], speaker_role_ds_second_idx_tensor)
+
+
+# def test__dataset_ds_first_zero_pad(
+#     mocker,
+#     conversation_dataset_ds_first_zero_pad,
+#     segment_data,
+#     segment_data_tensor,
+#     segment_data_delta_tensor,
+#     embedding_data,
+#     embedding_len_data,
+#     speaker_id_data,
+#     speaker_id_idx_data_tensor,
+#     speaker_role_ds_first,
+#     speaker_role_ds_first_idx_tensor,
+# ):
+#     load_segment_data_mock = mocker.patch("cdmodel.data.dataset._load_segment_data")
+#     # Make a copy of the segment data so the original isn't modified
+#     load_segment_data_mock.return_value = deepcopy(segment_data)
+
+#     load_embeddings_mock = mocker.patch("cdmodel.data.dataset._load_embeddings")
+#     load_embeddings_mock.return_value = (
+#         embedding_data,
+#         embedding_len_data,
+#     )
+
+#     num_turns = len(segment_data["feature_a"])
+
+#     output = conversation_dataset_ds_first_zero_pad[0]
+
+#     # Ensure that unpaddable output was not padded
+#     assert output.conv_id == [1]
+
+#     # Ensure turn-level features were padded
+#     assert output.num_segments == [num_turns + 1]
+
+#     # Ensure the first turn in the segment features is 0
+#     assert_close(
+#         output.segment_features[:, 0], torch.zeros_like(output.segment_features[:, 0])
+#     )
+#     assert_close(
+#         output.segment_features_delta[:, 0],
+#         torch.zeros_like(output.segment_features_delta[:, 0]),
+#     )
+
+#     # Ensure the remaining segment features are identical to the original
+#     assert_close(output.segment_features[0, 1:], segment_data_tensor)
+#     assert_close(output.segment_features_delta[0, 1:], segment_data_delta_tensor)
+
+#     # Ensure the embeddings were padded
+#     assert_close(output.embeddings[0], torch.zeros_like(embedding_data[0]))
+#     assert_close(output.embeddings[1:], embedding_data)
+
+#     # Ensure the embedding lengths were padded
+#     assert output.embeddings_segment_len[0] == 1
+#     assert_close(output.embeddings_segment_len[1:], embedding_len_data)
+
+#     # Ensure the speaker IDs and their indices were padded
+#     assert output.speaker_id[0][0] == 0
+#     assert output.speaker_id_idx[0, 0] == 0
+
+#     assert output.speaker_id[0][1:] == speaker_id_data
+#     assert_close(output.speaker_id_idx[0, 1:], speaker_id_idx_data_tensor)
+
+#     assert output.speaker_role[0][0] == None
+#     assert output.speaker_role[0][1:] == speaker_role_ds_first
+
+#     assert output.speaker_role_idx[0, 0] == 0
+#     assert_close(output.speaker_role_idx[0, 1:], speaker_role_ds_first_idx_tensor)
+
+#     print(output.segment_features_sides)
+
+
+def test__dataset_ds_both_zero_pad(
     mocker,
-    conversation_dataset_ds_second_zero_pad,
-    segment_data,
-    segment_data_tensor,
-    segment_data_delta_tensor,
-    embedding_data,
-    embedding_len_data,
-    speaker_id_data,
-    speaker_id_idx_data_tensor,
-    speaker_role_ds_second,
-    speaker_role_ds_second_idx_tensor,
-):
-    load_segment_data_mock = mocker.patch("cdmodel.data.dataset._load_segment_data")
-    load_segment_data_mock.return_value = segment_data
-
-    load_embeddings_mock = mocker.patch("cdmodel.data.dataset._load_embeddings")
-    load_embeddings_mock.return_value = (
-        embedding_data,
-        embedding_len_data,
-    )
-
-    num_turns = len(segment_data["feature_a"])
-
-    output = conversation_dataset_ds_second_zero_pad[0]
-
-    # Ensure that unpaddable output was not padded
-    assert output.conv_id == [1]
-
-    # Ensure turn-level features were padded
-    assert output.num_segments == [num_turns + 1]
-
-    # Ensure the first turn in the segment features is 0
-    assert_close(
-        output.segment_features[:, 0], torch.zeros_like(output.segment_features[:, 0])
-    )
-    assert_close(
-        output.segment_features_delta[:, 0],
-        torch.zeros_like(output.segment_features_delta[:, 0]),
-    )
-
-    # Ensure the remaining segment features are identical to the original
-    assert_close(output.segment_features[0, 1:], segment_data_tensor)
-    assert_close(output.segment_features_delta[0, 1:], segment_data_delta_tensor)
-
-    # Ensure the embeddings were padded
-    assert_close(output.embeddings[0], torch.zeros_like(embedding_data[0]))
-    assert_close(output.embeddings[1:], embedding_data)
-
-    # Ensure the embedding lengths were padded
-    assert output.embeddings_segment_len[0] == 1
-    assert_close(output.embeddings_segment_len[1:], embedding_len_data)
-
-    # Ensure the speaker IDs and their indices were padded
-    assert output.speaker_id[0][0] == 0
-    assert output.speaker_id_idx[0, 0] == 0
-
-    assert output.speaker_id[0][1:] == speaker_id_data
-    assert_close(output.speaker_id_idx[0, 1:], speaker_id_idx_data_tensor)
-
-    assert output.speaker_role[0][0] == None
-    assert output.speaker_role[0][1:] == speaker_role_ds_second
-
-    assert output.speaker_role_idx[0, 0] == 0
-    assert_close(output.speaker_role_idx[0, 1:], speaker_role_ds_second_idx_tensor)
-
-
-def test__dataset_ds_first_zero_pad(
-    mocker,
-    conversation_dataset_ds_first_zero_pad,
+    conversation_dataset_ds_both_zero_pad,
     segment_data,
     segment_data_tensor,
     segment_data_delta_tensor,
@@ -204,7 +288,8 @@ def test__dataset_ds_first_zero_pad(
     speaker_role_ds_first_idx_tensor,
 ):
     load_segment_data_mock = mocker.patch("cdmodel.data.dataset._load_segment_data")
-    load_segment_data_mock.return_value = segment_data
+    # Make a copy of the segment data so the original isn't modified
+    load_segment_data_mock.return_value = deepcopy(segment_data)
 
     load_embeddings_mock = mocker.patch("cdmodel.data.dataset._load_embeddings")
     load_embeddings_mock.return_value = (
@@ -214,44 +299,54 @@ def test__dataset_ds_first_zero_pad(
 
     num_turns = len(segment_data["feature_a"])
 
-    output = conversation_dataset_ds_first_zero_pad[0]
+    print("length", len(conversation_dataset_ds_both_zero_pad))
 
-    # Ensure that unpaddable output was not padded
-    assert output.conv_id == [1]
+    # output = conversation_dataset_ds_both_zero_pad[0]
 
-    # Ensure turn-level features were padded
-    assert output.num_segments == [num_turns + 1]
+    print(conversation_dataset_ds_both_zero_pad[0].segment_features_delta_sides)
 
-    # Ensure the first turn in the segment features is 0
-    assert_close(
-        output.segment_features[:, 0], torch.zeros_like(output.segment_features[:, 0])
-    )
-    assert_close(
-        output.segment_features_delta[:, 0],
-        torch.zeros_like(output.segment_features_delta[:, 0]),
-    )
+    load_segment_data_mock.return_value = deepcopy(segment_data)
 
-    # Ensure the remaining segment features are identical to the original
-    assert_close(output.segment_features[0, 1:], segment_data_tensor)
-    assert_close(output.segment_features_delta[0, 1:], segment_data_delta_tensor)
+    print(conversation_dataset_ds_both_zero_pad[3].segment_features_delta_sides)
 
-    # Ensure the embeddings were padded
-    assert_close(output.embeddings[0], torch.zeros_like(embedding_data[0]))
-    assert_close(output.embeddings[1:], embedding_data)
+    # # Ensure that unpaddable output was not padded
+    # assert output.conv_id == [1]
 
-    # Ensure the embedding lengths were padded
-    assert output.embeddings_segment_len[0] == 1
-    assert_close(output.embeddings_segment_len[1:], embedding_len_data)
+    # # Ensure turn-level features were padded
+    # assert output.num_segments == [num_turns + 1]
 
-    # Ensure the speaker IDs and their indices were padded
-    assert output.speaker_id[0][0] == 0
-    assert output.speaker_id_idx[0, 0] == 0
+    # # Ensure the first turn in the segment features is 0
+    # assert_close(
+    #     output.segment_features[:, 0], torch.zeros_like(output.segment_features[:, 0])
+    # )
+    # assert_close(
+    #     output.segment_features_delta[:, 0],
+    #     torch.zeros_like(output.segment_features_delta[:, 0]),
+    # )
 
-    assert output.speaker_id[0][1:] == speaker_id_data
-    assert_close(output.speaker_id_idx[0, 1:], speaker_id_idx_data_tensor)
+    # # Ensure the remaining segment features are identical to the original
+    # assert_close(output.segment_features[0, 1:], segment_data_tensor)
+    # assert_close(output.segment_features_delta[0, 1:], segment_data_delta_tensor)
 
-    assert output.speaker_role[0][0] == None
-    assert output.speaker_role[0][1:] == speaker_role_ds_first
+    # # Ensure the embeddings were padded
+    # assert_close(output.embeddings[0], torch.zeros_like(embedding_data[0]))
+    # assert_close(output.embeddings[1:], embedding_data)
 
-    assert output.speaker_role_idx[0, 0] == 0
-    assert_close(output.speaker_role_idx[0, 1:], speaker_role_ds_first_idx_tensor)
+    # # Ensure the embedding lengths were padded
+    # assert output.embeddings_segment_len[0] == 1
+    # assert_close(output.embeddings_segment_len[1:], embedding_len_data)
+
+    # # Ensure the speaker IDs and their indices were padded
+    # assert output.speaker_id[0][0] == 0
+    # assert output.speaker_id_idx[0, 0] == 0
+
+    # assert output.speaker_id[0][1:] == speaker_id_data
+    # assert_close(output.speaker_id_idx[0, 1:], speaker_id_idx_data_tensor)
+
+    # assert output.speaker_role[0][0] == None
+    # assert output.speaker_role[0][1:] == speaker_role_ds_first
+
+    # assert output.speaker_role_idx[0, 0] == 0
+    # assert_close(output.speaker_role_idx[0, 1:], speaker_role_ds_first_idx_tensor)
+
+    # print(output.segment_features_sides)

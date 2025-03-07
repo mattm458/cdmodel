@@ -1,6 +1,5 @@
 import json
 from os import path
-from random import Random
 from typing import Final
 
 import torch
@@ -10,11 +9,11 @@ from torch.utils.data import Dataset
 
 from cdmodel.common import ConversationData
 from cdmodel.common.role_assignment import (
-    AnalysisRole,
-    DialogueSystemRole,
+    BothPredictionRole,
+    AgentPartnerPredictionRole,
     Role,
     RoleAssignmentStrategy,
-    RoleType,
+    PredictionType,
     assign_speaker_roles,
 )
 
@@ -40,11 +39,10 @@ class ConversationDataset(Dataset):
         dataset_dir: str,
         segment_features: list[str],
         zero_pad: bool,
-        role_type: RoleType,
+        role_type: PredictionType,
         role_assignment_strategy: RoleAssignmentStrategy,
         conv_ids: list[int],
         speaker_ids: dict[int, int],
-        deterministic: bool = True,
     ):
         super().__init__()
 
@@ -53,20 +51,37 @@ class ConversationDataset(Dataset):
         self.segment_features: Final[list[str]] = segment_features
         self.zero_pad: Final[bool] = zero_pad
         self.speaker_ids: Final[dict[int, int]] = speaker_ids
-        self.role_type: Final[RoleType] = role_type
+        self.role_type: Final[PredictionType] = role_type
         self.role_assignment_strategy: Final[RoleAssignmentStrategy] = (
             role_assignment_strategy
         )
 
-        self.deterministic: Final[bool] = deterministic
-        self.random = Random()
-
     def __len__(self) -> int:
-        return len(self.conv_ids)
+        # If we use the 'both' role assignment strategy, the Dataset will
+        # present itself as being twice its true size. This is so the Dataset
+        # can return two instances of each conversation: once where the speaking
+        # role is assigned to the first speaker, and once where the speaking role
+        # is assigned to the second speaker.
+        if self.role_assignment_strategy == RoleAssignmentStrategy.both:
+            return len(self.conv_ids) * 2
+        else:
+            return len(self.conv_ids)
 
     def __getitem__(self, i: int) -> ConversationData:
-        if self.deterministic:
-            self.random.seed(i)
+        role_assignment_strategy: RoleAssignmentStrategy = self.role_assignment_strategy
+
+        # For the 'both' role assignment strategy, the dataset presents itself as
+        # 2x larger than its true size. Because of this, one of two outcomes is possible:
+        if role_assignment_strategy == RoleAssignmentStrategy.both:
+            # 1. The caller is asking for an instance in the first half of available
+            # instances. If so, we'll use the 'first' role assignment strategy.
+            if i < len(self.conv_ids):
+                role_assignment_strategy = RoleAssignmentStrategy.first
+            # 2. The caller is asking for an instance in the second half of available
+            # instances. If so, we'll use the 'second' role assignment strategy.
+            else:
+                i %= len(self.conv_ids)
+                role_assignment_strategy = RoleAssignmentStrategy.second
 
         conv_id: Final[int] = self.conv_ids[i]
 
@@ -90,9 +105,8 @@ class ConversationDataset(Dataset):
         # Establish speaker roles
         speaker_role, role_speaker_assignment = assign_speaker_roles(
             speaker_ids=speaker_id,
-            role_type=self.role_type,
-            role_assignment_strategy=self.role_assignment_strategy,
-            random=self.random,
+            prediction_type=self.role_type,
+            role_assignment_strategy=role_assignment_strategy,
         )
         speaker_role_idx = torch.tensor(
             [x.value if x is not None else 0 for x in speaker_role]
@@ -101,52 +115,68 @@ class ConversationDataset(Dataset):
             k: self.speaker_ids[v] for k, v in role_speaker_assignment.items()
         }
 
+        # Assemble conversation side data
+        segment_features_sides: dict[Role, Tensor] = {}
         segment_features_delta_sides: dict[Role, Tensor] = {}
-        segment_features_delta_sides_len: dict[Role, list[int]] = {}
-        match self.role_type:
-            case RoleType.DialogueSystem:
-                segment_features_delta_sides[DialogueSystemRole.partner] = (
-                    segment_features_delta[
-                        speaker_role_idx == DialogueSystemRole.partner.value
-                    ].unsqueeze(0)
-                )
-                segment_features_delta_sides_len[DialogueSystemRole.partner] = [
-                    segment_features_delta[
-                        speaker_role_idx == DialogueSystemRole.partner.value
-                    ].shape[0]
-                ]
-
-                segment_features_delta_sides[DialogueSystemRole.agent] = (
-                    segment_features_delta[
-                        speaker_role_idx == DialogueSystemRole.agent.value
-                    ].unsqueeze(0)
-                )
-                segment_features_delta_sides_len[DialogueSystemRole.agent] = [
-                    segment_features_delta[
-                        speaker_role_idx == DialogueSystemRole.agent.value
-                    ].shape[0]
-                ]
-            case RoleType.Analysis:
-                segment_features_delta_sides[AnalysisRole.a] = segment_features_delta[
-                    speaker_role_idx == AnalysisRole.a.value
+        segment_features_sides_len: dict[Role, list[int]] = {}
+        if self.role_type == PredictionType.AgentPartner:
+            segment_features_sides[AgentPartnerPredictionRole.partner] = (
+                segment_features[
+                    speaker_role_idx == AgentPartnerPredictionRole.partner.value
                 ].unsqueeze(0)
-                segment_features_delta_sides_len[AnalysisRole.a] = [
-                    segment_features_delta[
-                        speaker_role_idx == AnalysisRole.a.value
-                    ].shape[0]
-                ]
-
-                segment_features_delta_sides[AnalysisRole.b] = segment_features_delta[
-                    speaker_role_idx == AnalysisRole.b.value
+            )
+            segment_features_delta_sides[AgentPartnerPredictionRole.partner] = (
+                segment_features_delta[
+                    speaker_role_idx == AgentPartnerPredictionRole.partner.value
                 ].unsqueeze(0)
-                segment_features_delta_sides_len[AnalysisRole.b] = [
-                    segment_features_delta[
-                        speaker_role_idx == AnalysisRole.b.value
-                    ].shape[0]
-                ]
-            case _:
-                raise Exception("Oh no")
+            )
+            segment_features_sides_len[AgentPartnerPredictionRole.partner] = [
+                segment_features_delta[
+                    speaker_role_idx == AgentPartnerPredictionRole.partner.value
+                ].shape[0]
+            ]
 
+            segment_features_sides[AgentPartnerPredictionRole.agent] = segment_features[
+                speaker_role_idx == AgentPartnerPredictionRole.agent.value
+            ].unsqueeze(0)
+            segment_features_delta_sides[AgentPartnerPredictionRole.agent] = (
+                segment_features_delta[
+                    speaker_role_idx == AgentPartnerPredictionRole.agent.value
+                ].unsqueeze(0)
+            )
+            segment_features_sides_len[AgentPartnerPredictionRole.agent] = [
+                segment_features_delta[
+                    speaker_role_idx == AgentPartnerPredictionRole.agent.value
+                ].shape[0]
+            ]
+        elif self.role_type == PredictionType.Both:
+            segment_features_sides[BothPredictionRole.a] = segment_features[
+                speaker_role_idx == BothPredictionRole.a.value
+            ].unsqueeze(0)
+            segment_features_delta_sides[BothPredictionRole.a] = segment_features_delta[
+                speaker_role_idx == BothPredictionRole.a.value
+            ].unsqueeze(0)
+            segment_features_sides_len[BothPredictionRole.a] = [
+                segment_features_delta[
+                    speaker_role_idx == BothPredictionRole.a.value
+                ].shape[0]
+            ]
+
+            segment_features_sides[BothPredictionRole.b] = segment_features[
+                speaker_role_idx == BothPredictionRole.b.value
+            ].unsqueeze(0)
+            segment_features_delta_sides[BothPredictionRole.b] = segment_features_delta[
+                speaker_role_idx == BothPredictionRole.b.value
+            ].unsqueeze(0)
+            segment_features_sides_len[BothPredictionRole.b] = [
+                segment_features_delta[
+                    speaker_role_idx == BothPredictionRole.b.value
+                ].shape[0]
+            ]
+        else:
+            raise Exception("Oh no")
+
+        # If zero-padding is on, pad all of the relevant tensors
         if self.zero_pad:
             segment_features = F.pad(segment_features, (0, 0, 1, 0))
             segment_features_delta = F.pad(segment_features_delta, (0, 0, 1, 0))
@@ -157,12 +187,43 @@ class ConversationDataset(Dataset):
             speaker_role.insert(0, None)
             speaker_role_idx = F.pad(speaker_role_idx, (1, 0))
 
+            for side in segment_features_delta_sides:
+                segment_features_sides[side] = F.pad(
+                    segment_features_sides[side], (0, 0, 1, 0)
+                )
+                segment_features_delta_sides[side] = F.pad(
+                    segment_features_delta_sides[side], (0, 0, 1, 0)
+                )
+                segment_features_sides_len[side][0] += 1
+
+        # Assemble prediction metadata and conversation side attention masks
+        if self.role_type == PredictionType.AgentPartner:
+            predict_next: Tensor = (
+                speaker_role_idx == AgentPartnerPredictionRole.agent.value
+            )[1:]
+            history_mask_a = speaker_role_idx == AgentPartnerPredictionRole.agent.value
+            history_mask_b = (
+                speaker_role_idx == AgentPartnerPredictionRole.partner.value
+            )
+        elif self.role_type == PredictionType.Both:
+            predict_next: Tensor = torch.tensor(
+                [True for _ in range(len(speaker_role_idx) - 1)]
+            )
+            history_mask_a = speaker_role_idx == BothPredictionRole.a.value
+            history_mask_b = speaker_role_idx == BothPredictionRole.b.value
+        else:
+            raise Exception("Oh no")
+
         return ConversationData(
             conv_id=[conv_id],
             segment_features=segment_features.unsqueeze(0),
             segment_features_delta=segment_features_delta.unsqueeze(0),
+            segment_features_sides=segment_features_sides,
+            segment_features_sides_len=segment_features_sides_len,
             segment_features_delta_sides=segment_features_delta_sides,
-            segment_features_delta_sides_len=segment_features_delta_sides_len,
+            predict_next=predict_next.unsqueeze(0),
+            history_mask_a=history_mask_a.unsqueeze(0),
+            history_mask_b=history_mask_b.unsqueeze(0),
             embeddings=embeddings,
             embeddings_segment_len=embeddings_turn_len,
             num_segments=[segment_features.shape[0]],

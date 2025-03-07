@@ -14,8 +14,14 @@ class ConversationData(NamedTuple):
     # Turn-level features
     segment_features: Tensor
     segment_features_delta: Tensor
+    segment_features_sides: dict[Role, Tensor]
+    segment_features_sides_len: dict[Role, list[int]]
     segment_features_delta_sides: dict[Role, Tensor]
-    segment_features_delta_sides_len: dict[Role, list[int]]
+
+    # Speaker metadata
+    predict_next: Tensor
+    history_mask_a: Tensor
+    history_mask_b: Tensor
 
     # Turn-level word embeddings
     embeddings: Tensor
