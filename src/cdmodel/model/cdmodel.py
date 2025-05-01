@@ -1,7 +1,7 @@
 import math
 from collections import OrderedDict
 from enum import Enum
-from typing import Final, NamedTuple, Optional
+from typing import Final, Literal, NamedTuple, Optional, Union
 
 import torch
 from lightning import pytorch as pl
@@ -61,8 +61,9 @@ class CDModelOutput(NamedTuple):
     predicted_segment_features: Tensor
     # TODO: predict_next should come from the DataLoader now
     predict_next: Tensor
-    a_scores: Tensor
-    b_scores: Tensor
+    a_scores: Tensor | None
+    b_scores: Tensor | None
+    combined_scores: Tensor | None
     a_mask: Tensor
     b_mask: Tensor
     ist_weights_one_shot: dict[Role, Tensor] | None
@@ -81,7 +82,6 @@ class CDModel(pl.LightningModule):
     def __init__(
         self,
         feature_names: list[str],
-        prediction_strategy: str,
         embedding_dim: int,
         embedding_encoder_out_dim: int,
         embedding_encoder_num_layers: int,
@@ -95,11 +95,19 @@ class CDModel(pl.LightningModule):
         decoder_num_layers: int,
         decoder_dropout: float,
         attention_style: str,
+        encoder_speaker_role: bool,
+        att_context_speaker_role: bool,
+        att_weighting_strategy: (
+            Literal["att"] | Literal["random"] | Literal["uniform"]
+        ),
+        decoder_speaker_role: bool,
         num_decoders: int,
         speaker_role_encoding: str,
         role_type: str,
         lr: float,
         predict_format: str,
+        autoregressive_training: bool,
+        autoregressive_inference: bool,
         ext_ist_enabled: bool,  # Whether to enable ISTs (see below)
         ext_ist_encoded_concat: bool = False,  # Whether to concatenate the IST with encoded input
         ext_ist_att_in: bool = False,  # Whether to pass the IST into the attention layer
@@ -137,20 +145,23 @@ class CDModel(pl.LightningModule):
         ]
         del predict_format
 
+        self.autoregressive_training: Final[bool] = autoregressive_training
+        self.autoregressive_inference: Final[bool] = autoregressive_inference
+
         self.speaker_role_encoding: Final[SpeakerRoleEncoding] = SpeakerRoleEncoding[
             speaker_role_encoding
         ]
         del speaker_role_encoding
-        self.prediction_strategy: Final[CDPredictionStrategy] = CDPredictionStrategy[
-            prediction_strategy
-        ]
-        del prediction_strategy
         self.role_type: Final[PredictionType] = PredictionType[role_type]
         del role_type
         self.attention_style: Final[CDAttentionStyle] = CDAttentionStyle[
             attention_style
         ]
         del attention_style
+
+        self.encoder_speaker_role: Final[bool] = encoder_speaker_role
+        self.att_context_speaker_role: Final[bool] = att_context_speaker_role
+        self.decoder_speaker_role: Final[bool] = decoder_speaker_role
 
         self.ext_ist_sides: Final[ISTSides | None] = (
             ISTSides[ext_ist_sides] if ext_ist_sides is not None else None
@@ -194,7 +205,7 @@ class CDModel(pl.LightningModule):
         encoder_in_dim: Final[int] = (
             self.num_features  # The number of speech features the model is predicting
             + embedding_encoder_out_dim  # Dimensions of the embedding encoder output
-            + 2  # One-hot speaker role vector
+            + (2 if self.encoder_speaker_role else 0)  # One-hot speaker role vector
         )
 
         # Main encoder for input features
@@ -240,6 +251,7 @@ class CDModel(pl.LightningModule):
             embedding_encoder_att_dim  # The encoded representation of the upcoming segment transcript
             + (decoder_hidden_dim * decoder_num_layers)  # The decoder hidden state
             + (ext_ist_att_context_dim)  # IST token dimensions if active
+            + (2 if self.att_context_speaker_role else 0)  # One-hot speaker role vector
         )
 
         # Initialize the attention mechanisms
@@ -250,6 +262,7 @@ class CDModel(pl.LightningModule):
                         history_in_dim=history_dim,
                         context_dim=att_context_dim,
                         att_dim=decoder_att_dim,
+                        weighting_strategy=att_weighting_strategy,
                     )
                     for _ in range(num_decoders)
                 ]
@@ -261,6 +274,7 @@ class CDModel(pl.LightningModule):
                         history_in_dim=history_dim,
                         context_dim=att_context_dim,
                         att_dim=decoder_att_dim,
+                        weighting_strategy=att_weighting_strategy,
                     )
                     for _ in range(num_decoders)
                 ]
@@ -272,6 +286,7 @@ class CDModel(pl.LightningModule):
                         history_in_dim=history_dim,
                         context_dim=att_context_dim,
                         att_dim=decoder_att_dim,
+                        weighting_strategy=att_weighting_strategy,
                     )
                     for _ in range(num_decoders)
                 ]
@@ -300,7 +315,7 @@ class CDModel(pl.LightningModule):
         decoder_in_dim = (
             embedding_encoder_out_dim  # Size of the embedding encoder output for upcoming segment text
             + att_history_out_dim  # Size of the attention mechanism output for summarized historical segments
-            + 2  # One-hot speaker role vector
+            + (2 if self.decoder_speaker_role else 0)  # One-hot speaker role vector
             + ext_ist_decoder_in_dim  # IST token dimensions if active
         )
 
@@ -445,7 +460,6 @@ class CDModel(pl.LightningModule):
                 f"Unsupported speaker role encoding {self.speaker_role_encoding}"
             )
 
-        predict_next_segmented = timestep_split(predict_next)
         speaker_role_idx_segmented = timestep_split(speaker_role_idx)
         speaker_role_encoded_segmented = timestep_split(speaker_role_encoded)
         features_arr = timestep_split(segment_features)
@@ -466,7 +480,6 @@ class CDModel(pl.LightningModule):
         # Lists to store accumulated conversation data from the main loop below
         history_cat: list[Tensor] = []
         decoded_all_cat: list[Tensor] = []
-        decoder_high_all_cat: list[Tensor] = []
 
         a_scores_all: list[Tensor] = []
         b_scores_all: list[Tensor] = []
@@ -479,8 +492,6 @@ class CDModel(pl.LightningModule):
         predict_prev = torch.zeros((batch_size,), device=device, dtype=torch.bool)
 
         predict_cat: list[Tensor] = []
-
-        history_encoded_timesteps: list[Tensor] = []
 
         # IST Tokens
         ist_embeddings_one_shot: OrderedDict[Role, Tensor] | None = None
@@ -577,12 +588,16 @@ class CDModel(pl.LightningModule):
 
             # Assemble the encoder input. This includes the current conversation features
             # and the previously-encoded embeddings.
+            encoder_in_arr = [
+                features_i,
+                embeddings_encoded_segmented[i],
+            ]
+
+            if self.encoder_speaker_role:
+                encoder_in_arr.append(speaker_role_encoded_segmented[i])
+
             encoder_in: Tensor = torch.cat(
-                [
-                    features_i,
-                    embeddings_encoded_segmented[i],
-                    speaker_role_encoded_segmented[i],
-                ],
+                encoder_in_arr,
                 dim=-1,
             )
 
@@ -641,6 +656,9 @@ class CDModel(pl.LightningModule):
                 )
             ):
                 attention_context = h + [embeddings_encoded_segmented[i + 1]]
+                if self.att_context_speaker_role:
+                    attention_context.append(speaker_role_encoded_segmented[i + 1])
+
                 if self.ext_ist_att_in and ist_embeddings is not None:
                     attention_context.append(ist_embeddings)
 
@@ -658,13 +676,15 @@ class CDModel(pl.LightningModule):
                 if att_scores.combined_scores is not None:
                     combined_scores_cat.append(att_scores.combined_scores)
 
-                history_encoded_timesteps.append(history_encoded.detach().clone())
-
                 decoder_in_arr = [
                     history_encoded,
                     embeddings_encoded_segmented[i + 1],
-                    speaker_role_encoded_segmented[i + 1],
                 ]
+
+                if self.decoder_speaker_role:
+                    decoder_in_arr.append(
+                        speaker_role_encoded_segmented[i + 1],
+                    )
                 if ist_embeddings is not None and self.ext_ist_decoder_in:
                     decoder_in_arr.append(ist_embeddings)
                 decoder_in = torch.cat(decoder_in_arr, dim=-1)
@@ -679,16 +699,12 @@ class CDModel(pl.LightningModule):
 
             # Assemble final predicted features
             features_pred = torch.cat(features_pred_cat, dim=-1)
-            decoder_high_all_cat.append(torch.cat(decoder_high_cat, dim=-1))
             decoded_all_cat.append(features_pred.unsqueeze(1))
 
             if len(a_scores_cat) > 0:
                 a_scores_all.append(torch.cat(a_scores_cat, dim=1))
             if len(b_scores_cat) > 0:
                 b_scores_all.append(torch.cat(b_scores_cat, dim=1))
-            else:
-                # TODO: Clarify what happens heres
-                raise Exception("UH OH")
             if len(combined_scores_cat) > 0:
                 combined_scores_all.append(torch.cat(combined_scores_cat, dim=1))
 
@@ -713,6 +729,11 @@ class CDModel(pl.LightningModule):
             b_scores=(
                 expand_cat(b_scores_all, dim=-1) if len(b_scores_all) > 0 else None
             ),
+            combined_scores=(
+                expand_cat(combined_scores_all, dim=-1)
+                if len(combined_scores_all) > 0
+                else None
+            ),
             a_mask=expand_cat(a_mask_all, dim=-1),
             b_mask=expand_cat(b_mask_all, dim=-1),
         )
@@ -736,7 +757,7 @@ class CDModel(pl.LightningModule):
             embeddings_len=batch.embeddings_segment_len,
             conv_len=batch.num_segments,
             speaker_role_idx=batch.speaker_role_idx,
-            is_autoregressive=True,
+            is_autoregressive=self.autoregressive_training,
         )
 
         if batch_idx == 0 and results.ist_weights_one_shot is not None:
@@ -758,13 +779,19 @@ class CDModel(pl.LightningModule):
             raise NotImplementedError(
                 f"Output format {self.output_format} not supported!"
             )
+
         loss = F.mse_loss(
             results.predicted_segment_features[results.predict_next],
             y[results.predict_next],
         )
 
         self.log(
-            "training_loss", loss.detach(), on_epoch=True, on_step=True, sync_dist=True
+            "training_loss",
+            loss.detach(),
+            on_epoch=True,
+            on_step=True,
+            sync_dist=True,
+            batch_size=batch_size,
         )
 
         if self.ext_ist_objective_speaker_id:
@@ -784,6 +811,7 @@ class CDModel(pl.LightningModule):
                 on_epoch=True,
                 on_step=True,
                 sync_dist=True,
+                batch_size=batch_size,
             )
             loss += speaker_id_loss
 
@@ -813,24 +841,28 @@ class CDModel(pl.LightningModule):
                 on_epoch=True,
                 on_step=True,
                 sync_dist=True,
+                batch_size=batch_size,
             )
 
         return loss
 
     def validation_step(self, batch: ConversationData, batch_idx: int) -> Tensor:
+        batch_size = batch.segment_features.shape[0]
+
         results = self(
             segment_features=batch.segment_features,
             segment_features_delta=batch.segment_features_delta,
             segment_features_sides=batch.segment_features_sides,
             segment_features_delta_sides=batch.segment_features_delta_sides,
-            segment_features_sides_len=batch.segment_features_sides_len,            predict_next=batch.predict_next,
+            segment_features_sides_len=batch.segment_features_sides_len,
+            predict_next=batch.predict_next,
             history_mask_a=batch.history_mask_a,
             history_mask_b=batch.history_mask_b,
             embeddings=batch.embeddings,
             embeddings_len=batch.embeddings_segment_len,
             conv_len=batch.num_segments,
             speaker_role_idx=batch.speaker_role_idx,
-            is_autoregressive=True,
+            is_autoregressive=self.autoregressive_inference,
         )
 
         if batch_idx == 0 and results.ist_weights_one_shot is not None:
@@ -848,11 +880,11 @@ class CDModel(pl.LightningModule):
             y = batch.segment_features[:, 1:]
         elif self.output_format == CDModelPredictFormat.delta:
             y = batch.segment_features_delta[:, 1:]
-
         else:
             raise NotImplementedError(
                 f"Output format {self.output_format} not supported!"
             )
+
         loss = F.mse_loss(
             results.predicted_segment_features[results.predict_next],
             y[results.predict_next],
@@ -862,9 +894,21 @@ class CDModel(pl.LightningModule):
             y[results.predict_next],
         )
 
-        self.log("validation_loss", loss, on_epoch=True, on_step=False, sync_dist=True)
         self.log(
-            "validation_loss_l1", loss_l1, on_epoch=True, on_step=False, sync_dist=True
+            "validation_loss",
+            loss,
+            on_epoch=True,
+            on_step=False,
+            sync_dist=True,
+            batch_size=batch_size,
+        )
+        self.log(
+            "validation_loss_l1",
+            loss_l1,
+            on_epoch=True,
+            on_step=False,
+            sync_dist=True,
+            batch_size=batch_size,
         )
 
         if self.ext_ist_objective_speaker_id:
@@ -884,6 +928,7 @@ class CDModel(pl.LightningModule):
                 on_epoch=True,
                 on_step=False,
                 sync_dist=True,
+                batch_size=batch_size,
             )
 
         for feature_idx, feature_name in enumerate(self.feature_names):
@@ -898,6 +943,7 @@ class CDModel(pl.LightningModule):
                 on_epoch=True,
                 on_step=False,
                 sync_dist=True,
+                batch_size=batch_size,
             )
 
         # if batch_idx == 0:
@@ -913,14 +959,15 @@ class CDModel(pl.LightningModule):
             segment_features_delta=batch.segment_features_delta,
             segment_features_sides=batch.segment_features_sides,
             segment_features_delta_sides=batch.segment_features_delta_sides,
-            segment_features_sides_len=batch.segment_features_sides_len,            predict_next=batch.predict_next,
+            segment_features_sides_len=batch.segment_features_sides_len,
+            predict_next=batch.predict_next,
             history_mask_a=batch.history_mask_a,
             history_mask_b=batch.history_mask_b,
             embeddings=batch.embeddings,
             embeddings_len=batch.embeddings_segment_len,
             conv_len=batch.num_segments,
             speaker_role_idx=batch.speaker_role_idx,
-            is_autoregressive=True,
+            is_autoregressive=self.autoregressive_inference,
         )
 
         if self.output_format == CDModelPredictFormat.value:
@@ -931,6 +978,7 @@ class CDModel(pl.LightningModule):
             raise NotImplementedError(
                 f"Output format {self.output_format} not supported!"
             )
+
         loss = F.mse_loss(
             results.predicted_segment_features[results.predict_next],
             y[results.predict_next],
