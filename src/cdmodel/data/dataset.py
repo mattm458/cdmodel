@@ -115,6 +115,8 @@ class ConversationDataset(Dataset):
             k: self.speaker_ids[v] for k, v in role_speaker_assignment.items()
         }
 
+        transcript = conv_data["transcript"]
+
         # Assemble conversation side data
         segment_features_sides: dict[Role, Tensor] = {}
         segment_features_delta_sides: dict[Role, Tensor] = {}
@@ -196,6 +198,8 @@ class ConversationDataset(Dataset):
                 )
                 segment_features_sides_len[side][0] += 1
 
+            transcript = [""] + transcript
+
         # Assemble prediction metadata and conversation side attention masks
         if self.role_type == PredictionType.AgentPartner:
             predict_next: Tensor = (
@@ -233,4 +237,5 @@ class ConversationDataset(Dataset):
             speaker_role_idx=speaker_role_idx.unsqueeze(0),
             role_speaker_assignment=[role_speaker_assignment],
             role_speaker_assignment_idx=[role_speaker_assignment_idx],
+            transcript=[transcript],
         )

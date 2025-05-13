@@ -36,8 +36,11 @@ def collate_fn(batches: list[ConversationData]) -> ConversationData:
     history_mask_a_all: Final[list[Tensor]] = []
     history_mask_b_all: Final[list[Tensor]] = []
 
+    transcript_all: Final[list[list[str]]] = []
+
     # For padding embedding segments
     longest_embedding_segment: int = 0
+    longest_transcript: int = 0
 
     for batch in batches:
         conv_id_all.extend(batch.conv_id)
@@ -68,6 +71,10 @@ def collate_fn(batches: list[ConversationData]) -> ConversationData:
         predict_next_all.append(batch.predict_next.squeeze(0))
         history_mask_a_all.append(batch.history_mask_a.squeeze(0))
         history_mask_b_all.append(batch.history_mask_b.squeeze(0))
+
+        transcript_all.extend(batch.transcript)
+        if len(batch.transcript[0]) > longest_transcript:
+            longest_transcript = len(batch.transcript[0])
 
     conv_id: Final[list[int]] = conv_id_all
 
@@ -134,6 +141,10 @@ def collate_fn(batches: list[ConversationData]) -> ConversationData:
     history_mask_a = nn.utils.rnn.pad_sequence(history_mask_a_all, batch_first=True)
     history_mask_b = nn.utils.rnn.pad_sequence(history_mask_b_all, batch_first=True)
 
+    transcript: list[list[str]] = []
+    for t_i in transcript_all:
+        transcript.append(t_i + ["" for _ in range(longest_transcript - len(t_i))])
+
     return ConversationData(
         conv_id=conv_id,
         segment_features=segment_features,
@@ -153,4 +164,5 @@ def collate_fn(batches: list[ConversationData]) -> ConversationData:
         predict_next=predict_next,
         history_mask_a=history_mask_a,
         history_mask_b=history_mask_b,
+        transcript=transcript,
     )

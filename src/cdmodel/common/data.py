@@ -17,6 +17,7 @@ class ConversationData(NamedTuple):
     segment_features_sides: dict[Role, Tensor]
     segment_features_sides_len: dict[Role, list[int]]
     segment_features_delta_sides: dict[Role, Tensor]
+    transcript: list[list[str]]
 
     # Speaker metadata
     predict_next: Tensor
