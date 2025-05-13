@@ -69,18 +69,25 @@ class Attention(AttentionModule):
         history_in_dim: int,
         context_dim: int,
         att_dim: int,
+        weighting_strategy: Literal["att"] | Literal["random"] | Literal["uniform"],
         scoring_activation: AttentionActivation = AttentionActivation.softmax,
     ):
         super().__init__()
 
         self.context_dim = context_dim
         self.scoring_activation = scoring_activation
+        self.weighting_strategy = weighting_strategy
 
         print(scoring_activation)
 
-        self.history = nn.Linear(history_in_dim, att_dim, bias=False)
-        self.context = nn.Linear(context_dim, att_dim, bias=False)
-        self.v = nn.Linear(att_dim, 1, bias=False)
+        # If we're using an alternative weighting strategy, we don't need weights
+        if self.weighting_strategy == "att":
+            print("Attention: Using normal attention scoring")
+            self.history = nn.Linear(history_in_dim, att_dim, bias=False)
+            self.context = nn.Linear(context_dim, att_dim, bias=False)
+            self.v = nn.Linear(att_dim, 1, bias=False)
+        else:
+            print(f"Attention: Using {weighting_strategy} weighting strategy")
 
     def forward(
         self,
@@ -89,10 +96,26 @@ class Attention(AttentionModule):
         mask: Optional[Tensor] = None,
         weight_offset: Optional[Tensor] = None,
     ) -> tuple[Tensor, Tensor]:
-        history_att: Tensor = self.history(history)
-        context_att: Tensor = self.context(context).unsqueeze(1)
+        score: Tensor
 
-        score: Tensor = self.v(torch.tanh(history_att + context_att))
+        if self.weighting_strategy == "uniform":
+            score = torch.ones(
+                (history.shape[0], history.shape[1], 1),
+                dtype=history.dtype,
+                device=history.device,
+            )
+        elif self.weighting_strategy == "random":
+            score = torch.rand(
+                (history.shape[0], history.shape[1], 1),
+                dtype=history.dtype,
+                device=history.device,
+            )
+        elif self.weighting_strategy == "att":
+            history_att: Tensor = self.history(history)
+            context_att: Tensor = self.context(context).unsqueeze(1)
+
+            score = self.v(torch.tanh(history_att + context_att))
+
         if mask is not None:
             score = score.masked_fill(mask, float("-inf"))
 
@@ -117,18 +140,26 @@ class Attention(AttentionModule):
 
 
 class DualAttention(AttentionModule):
-    def __init__(self, history_in_dim: int, context_dim: int, att_dim: int):
+    def __init__(
+        self,
+        history_in_dim: int,
+        context_dim: int,
+        att_dim: int,
+        weighting_strategy: Literal["att"] | Literal["random"] | Literal["uniform"],
+    ):
         super().__init__()
 
         self.our_attention = Attention(
             history_in_dim=history_in_dim,
             context_dim=context_dim,
             att_dim=att_dim,
+            weighting_strategy=weighting_strategy,
         )
         self.their_attention = Attention(
             history_in_dim=history_in_dim,
             context_dim=context_dim,
             att_dim=att_dim,
+            weighting_strategy=weighting_strategy,
         )
 
     def forward(
@@ -153,13 +184,20 @@ class DualAttention(AttentionModule):
 
 
 class SingleAttention(AttentionModule):
-    def __init__(self, history_in_dim: int, context_dim: int, att_dim: int):
+    def __init__(
+        self,
+        history_in_dim: int,
+        context_dim: int,
+        att_dim: int,
+        weighting_strategy: Literal["att"] | Literal["random"] | Literal["uniform"],
+    ):
         super().__init__()
 
         self.attention = Attention(
             history_in_dim=history_in_dim,
             context_dim=context_dim,
             att_dim=att_dim,
+            weighting_strategy=weighting_strategy,
         )
 
     def forward(
@@ -175,13 +213,20 @@ class SingleAttention(AttentionModule):
 
 
 class SinglePartnerAttention(AttentionModule):
-    def __init__(self, history_in_dim: int, context_dim: int, att_dim: int):
+    def __init__(
+        self,
+        history_in_dim: int,
+        context_dim: int,
+        att_dim: int,
+        weighting_strategy: Literal["att"] | Literal["random"] | Literal["uniform"],
+    ):
         super().__init__()
 
         self.attention = Attention(
             history_in_dim=history_in_dim,
             context_dim=context_dim,
             att_dim=att_dim,
+            weighting_strategy=weighting_strategy,
         )
 
     def forward(
@@ -235,6 +280,7 @@ class EmbeddingEncoder(nn.Module):
             history_in_dim=encoder_out_dim,
             context_dim=encoder_out_dim * 2,
             att_dim=attention_dim,
+            weighting_strategy="att",
         )
 
     def forward(self, encoder_in: Tensor, lengths: Tensor) -> tuple[Tensor, Tensor]:

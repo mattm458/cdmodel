@@ -97,9 +97,7 @@ class CDModel(pl.LightningModule):
         attention_style: str,
         encoder_speaker_role: bool,
         att_context_speaker_role: bool,
-        att_weighting_strategy: (
-            Literal["att"] | Literal["random"] | Literal["uniform"]
-        ),
+        att_weighting_strategy: Literal["att"] | Literal["random"] | Literal["uniform"],
         decoder_speaker_role: bool,
         num_decoders: int,
         speaker_role_encoding: str,
