@@ -87,6 +87,7 @@ class CDModel(pl.LightningModule):
         embedding_encoder_num_layers: int,
         embedding_encoder_dropout: float,
         embedding_encoder_att_dim: int,
+        use_embeddings: bool,
         encoder_hidden_dim: int,
         encoder_num_layers: int,
         encoder_dropout: float,
@@ -185,13 +186,18 @@ class CDModel(pl.LightningModule):
         # The embedding encoder encodes textual data associated with each conversational
         # segment. At each segment, it accepts a sequence of word embeddings and outputs
         # a vector of size `embedding_encoder_out_dim`.
-        self.embedding_encoder = EmbeddingEncoder(
-            embedding_dim=embedding_dim,
-            encoder_out_dim=embedding_encoder_out_dim,
-            encoder_num_layers=embedding_encoder_num_layers,
-            encoder_dropout=embedding_encoder_dropout,
-            attention_dim=embedding_encoder_att_dim,
-        )
+        self.use_embeddings: Final[bool] = use_embeddings
+
+        self.embedding_encoder: EmbeddingEncoder | None = None
+
+        if self.use_embeddings:
+            self.embedding_encoder = EmbeddingEncoder(
+                embedding_dim=embedding_dim,
+                encoder_out_dim=embedding_encoder_out_dim,
+                encoder_num_layers=embedding_encoder_num_layers,
+                encoder_dropout=embedding_encoder_dropout,
+                attention_dim=embedding_encoder_att_dim,
+            )
 
         # Segment encoder
         # =====================
@@ -200,11 +206,15 @@ class CDModel(pl.LightningModule):
         # representation of the words spoken in the segment, and a one-hot vector of
         # the speaker role. Each encoded segment is kept by appending it to the conversation
         # history.
-        encoder_in_dim: Final[int] = (
+        encoder_in_dim: int = (
             self.num_features  # The number of speech features the model is predicting
-            + embedding_encoder_out_dim  # Dimensions of the embedding encoder output
             + (2 if self.encoder_speaker_role else 0)  # One-hot speaker role vector
         )
+
+        if self.use_embeddings:
+            encoder_in_dim += (
+                embedding_encoder_out_dim  # Dimensions of the embedding encoder output
+            )
 
         # Main encoder for input features
         print(f"Encoder: encoder_hidden_dim = {encoder_hidden_dim}")
@@ -245,12 +255,14 @@ class CDModel(pl.LightningModule):
         if self.ext_ist_sides == ISTSides.both:
             ext_ist_att_context_dim *= 2
 
-        att_context_dim: Final[int] = (
-            embedding_encoder_att_dim  # The encoded representation of the upcoming segment transcript
-            + (decoder_hidden_dim * decoder_num_layers)  # The decoder hidden state
+        att_context_dim: int = (
+            +(decoder_hidden_dim * decoder_num_layers)  # The decoder hidden state
             + (ext_ist_att_context_dim)  # IST token dimensions if active
             + (2 if self.att_context_speaker_role else 0)  # One-hot speaker role vector
         )
+
+        if self.use_embeddings:
+            att_context_dim += embedding_encoder_att_dim  # The encoded representation of the upcoming segment transcript
 
         # Initialize the attention mechanisms
         if self.attention_style == CDAttentionStyle.dual:
@@ -311,11 +323,13 @@ class CDModel(pl.LightningModule):
             ext_ist_decoder_in_dim *= 2
 
         decoder_in_dim = (
-            embedding_encoder_out_dim  # Size of the embedding encoder output for upcoming segment text
-            + att_history_out_dim  # Size of the attention mechanism output for summarized historical segments
+            att_history_out_dim  # Size of the attention mechanism output for summarized historical segments
             + (2 if self.decoder_speaker_role else 0)  # One-hot speaker role vector
             + ext_ist_decoder_in_dim  # IST token dimensions if active
         )
+
+        if self.use_embeddings:
+            decoder_in_dim += embedding_encoder_out_dim  # Size of the embedding encoder output for upcoming segment text
 
         # Initialize the decoders
         if num_decoders == 1:
@@ -446,10 +460,12 @@ class CDModel(pl.LightningModule):
         num_segments: Final[int] = segment_features.shape[1]
         device = segment_features.device
 
-        embeddings_encoded, _ = self.embedding_encoder(embeddings, embeddings_len)
-        embeddings_encoded = nn.utils.rnn.pad_sequence(
-            torch.split(embeddings_encoded, conv_len), batch_first=True  # type: ignore
-        )
+        embeddings_encoded: Tensor | None = None
+        if self.embedding_encoder is not None:
+            embeddings_encoded, _ = self.embedding_encoder(embeddings, embeddings_len)
+            embeddings_encoded = nn.utils.rnn.pad_sequence(
+                torch.split(embeddings_encoded, conv_len), batch_first=True  # type: ignore
+            )
 
         if self.speaker_role_encoding == SpeakerRoleEncoding.one_hot:
             speaker_role_encoded = one_hot_drop_0(speaker_role_idx, num_classes=3)
@@ -462,8 +478,11 @@ class CDModel(pl.LightningModule):
         speaker_role_encoded_segmented = timestep_split(speaker_role_encoded)
         features_arr = timestep_split(segment_features)
         predict_next_segmented = timestep_split(predict_next)
-        embeddings_encoded_segmented = timestep_split(embeddings_encoded)
         segment_features_delta_segmented = timestep_split(segment_features_delta)
+
+        embeddings_encoded_segmented: list[Tensor] | None = None
+        if embeddings_encoded is not None:
+            embeddings_encoded_segmented = timestep_split(embeddings_encoded)
 
         features_input_arr: list[Tensor] = []
 
@@ -586,10 +605,10 @@ class CDModel(pl.LightningModule):
 
             # Assemble the encoder input. This includes the current conversation features
             # and the previously-encoded embeddings.
-            encoder_in_arr = [
-                features_i,
-                embeddings_encoded_segmented[i],
-            ]
+            encoder_in_arr = [features_i]
+
+            if embeddings_encoded_segmented is not None:
+                encoder_in_arr.append(embeddings_encoded_segmented[i])
 
             if self.encoder_speaker_role:
                 encoder_in_arr.append(speaker_role_encoded_segmented[i])
@@ -653,7 +672,10 @@ class CDModel(pl.LightningModule):
                     self.decoders,
                 )
             ):
-                attention_context = h + [embeddings_encoded_segmented[i + 1]]
+                attention_context: list[Tensor] = []
+                attention_context.extend(h)
+                if embeddings_encoded_segmented is not None:
+                    attention_context.append(embeddings_encoded_segmented[i + 1])
                 if self.att_context_speaker_role:
                     attention_context.append(speaker_role_encoded_segmented[i + 1])
 
@@ -676,8 +698,10 @@ class CDModel(pl.LightningModule):
 
                 decoder_in_arr = [
                     history_encoded,
-                    embeddings_encoded_segmented[i + 1],
                 ]
+
+                if embeddings_encoded_segmented is not None:
+                    decoder_in_arr.append(embeddings_encoded_segmented[i + 1])
 
                 if self.decoder_speaker_role:
                     decoder_in_arr.append(
