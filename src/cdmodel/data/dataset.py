@@ -37,7 +37,7 @@ class ConversationDataset(Dataset):
     def __init__(
         self,
         dataset_dir: str,
-        segment_features: list[str],
+        feature_names: list[str],
         zero_pad: bool,
         role_type: PredictionType,
         role_assignment_strategy: RoleAssignmentStrategy,
@@ -48,7 +48,7 @@ class ConversationDataset(Dataset):
 
         self.dataset_dir: Final[str] = dataset_dir
         self.conv_ids: Final[list[int]] = conv_ids
-        self.segment_features: Final[list[str]] = segment_features
+        self.feature_names: Final[list[str]] = feature_names
         self.zero_pad: Final[bool] = zero_pad
         self.speaker_ids: Final[dict[int, int]] = speaker_ids
         self.role_type: Final[PredictionType] = role_type
@@ -90,7 +90,7 @@ class ConversationDataset(Dataset):
         embeddings, embeddings_turn_len = _load_embeddings(self.dataset_dir, conv_id)
 
         segment_features: Tensor = torch.tensor(
-            [conv_data[feature] for feature in self.segment_features]
+            [conv_data[feature] for feature in self.feature_names]
         ).swapaxes(0, 1)
         segment_features_delta = segment_features.diff(
             dim=0, prepend=torch.zeros(1, segment_features.shape[1])

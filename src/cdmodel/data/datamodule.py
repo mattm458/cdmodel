@@ -62,7 +62,7 @@ class ConversationDataModule(LightningDataModule):
             case "fit":
                 self.dataset_train = ConversationDataset(
                     dataset_dir=self.dataset_dir,
-                    segment_features=self.segment_features,
+                    feature_names=self.segment_features,
                     zero_pad=self.zero_pad,
                     role_type=self.role_type,
                     role_assignment_strategy=self.role_assignment_strategy,
@@ -75,7 +75,7 @@ class ConversationDataModule(LightningDataModule):
                 )
                 self.dataset_validate = ConversationDataset(
                     dataset_dir=self.dataset_dir,
-                    segment_features=self.segment_features,
+                    feature_names=self.segment_features,
                     zero_pad=self.zero_pad,
                     role_type=self.role_type,
                     role_assignment_strategy=self.role_assignment_strategy,
@@ -89,7 +89,7 @@ class ConversationDataModule(LightningDataModule):
             case "validate":
                 self.dataset_validate = ConversationDataset(
                     dataset_dir=self.dataset_dir,
-                    segment_features=self.segment_features,
+                    feature_names=self.segment_features,
                     zero_pad=self.zero_pad,
                     role_type=self.role_type,
                     role_assignment_strategy=self.role_assignment_strategy,
@@ -103,7 +103,7 @@ class ConversationDataModule(LightningDataModule):
             case "test":
                 self.dataset_test = ConversationDataset(
                     dataset_dir=self.dataset_dir,
-                    segment_features=self.segment_features,
+                    feature_names=self.segment_features,
                     zero_pad=self.zero_pad,
                     role_type=self.role_type,
                     role_assignment_strategy=self.role_assignment_strategy,
@@ -117,7 +117,7 @@ class ConversationDataModule(LightningDataModule):
             case "predict":
                 self.dataset_predict = ConversationDataset(
                     dataset_dir=self.dataset_dir,
-                    segment_features=self.segment_features,
+                    feature_names=self.segment_features,
                     zero_pad=self.zero_pad,
                     role_type=self.role_type,
                     role_assignment_strategy=self.role_assignment_strategy,
