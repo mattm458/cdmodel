@@ -18,17 +18,21 @@ from cdmodel.common.role_assignment import (
 )
 
 
-def _load_segment_data(dataset_dir: str, conv_id: int) -> dict:
+def load_segment_data(dataset_dir: str, conv_id: int) -> dict:
     with open(path.join(dataset_dir, "segments", f"{conv_id}.json")) as infile:
         return json.load(infile)
 
 
-def _load_embeddings(dataset_dir: str, conv_id: int) -> tuple[Tensor, Tensor]:
+def load_embeddings(dataset_dir: str, conv_id: int, embeddings_dir: str) -> Tensor:
     return torch.load(
-        path.join(dataset_dir, "embeddings", f"{conv_id}-embeddings.pt"),
+        path.join(dataset_dir, embeddings_dir, f"{conv_id}-embeddings.pt"),
         weights_only=True,
-    ), torch.load(
-        path.join(dataset_dir, "embeddings", f"{conv_id}-lengths.pt"),
+    )
+
+
+def load_embeddings_len(dataset_dir: str, conv_id: int, embeddings_dir: str) -> Tensor:
+    return torch.load(
+        path.join(dataset_dir, embeddings_dir, f"{conv_id}-lengths.pt"),
         weights_only=True,
     )
 
@@ -43,8 +47,17 @@ class ConversationDataset(Dataset):
         role_assignment_strategy: RoleAssignmentStrategy,
         conv_ids: list[int],
         speaker_ids: dict[int, int],
+        embeddings_type: str | None,
     ):
         super().__init__()
+
+        if (
+            role_type == PredictionType.Both
+            and role_assignment_strategy != RoleAssignmentStrategy.first
+        ):
+            raise Exception(
+                "The 'Both' prediction type can only be used with the 'first' role assignment strategy"
+            )
 
         self.dataset_dir: Final[str] = dataset_dir
         self.conv_ids: Final[list[int]] = conv_ids
@@ -55,6 +68,7 @@ class ConversationDataset(Dataset):
         self.role_assignment_strategy: Final[RoleAssignmentStrategy] = (
             role_assignment_strategy
         )
+        self.embeddings_type: Final[str | None] = embeddings_type
 
     def __len__(self) -> int:
         # If we use the 'both' role assignment strategy, the Dataset will
@@ -86,8 +100,19 @@ class ConversationDataset(Dataset):
         conv_id: Final[int] = self.conv_ids[i]
 
         # Load conversation data from disk
-        conv_data: Final[dict] = _load_segment_data(self.dataset_dir, conv_id)
-        embeddings, embeddings_turn_len = _load_embeddings(self.dataset_dir, conv_id)
+        conv_data: Final[dict] = load_segment_data(self.dataset_dir, conv_id)
+
+        word_embeddings = None
+        word_embeddings_len = None
+        segment_embeddings = None
+
+        if self.embeddings_type == "glove":
+            word_embeddings = load_embeddings(self.dataset_dir, conv_id, "glove")
+            word_embeddings_len = load_embeddings_len(
+                self.dataset_dir, conv_id, "glove"
+            )
+        elif self.embeddings_type == "roberta":
+            segment_embeddings = load_embeddings(self.dataset_dir, conv_id, "roberta")
 
         segment_features: Tensor = torch.tensor(
             [conv_data[feature] for feature in self.feature_names]
@@ -182,21 +207,28 @@ class ConversationDataset(Dataset):
         if self.zero_pad:
             segment_features = F.pad(segment_features, (0, 0, 1, 0))
             segment_features_delta = F.pad(segment_features_delta, (0, 0, 1, 0))
-            embeddings = F.pad(embeddings, (0, 0, 0, 0, 1, 0))
-            embeddings_turn_len = F.pad(embeddings_turn_len, (1, 0), value=1)
+
+            if word_embeddings is not None:
+                word_embeddings = F.pad(word_embeddings, (0, 0, 0, 0, 1, 0))
+            if word_embeddings_len is not None:
+                word_embeddings_len = F.pad(word_embeddings_len, (1, 0), value=1)
+            if segment_embeddings is not None:
+                segment_embeddings = F.pad(segment_embeddings, (0, 0, 1, 0))
+
             speaker_id.insert(0, 0)
             speaker_id_idx = F.pad(speaker_id_idx, (1, 0))
             speaker_role.insert(0, None)
             speaker_role_idx = F.pad(speaker_role_idx, (1, 0))
 
-            for side in segment_features_delta_sides:
-                segment_features_sides[side] = F.pad(
-                    segment_features_sides[side], (0, 0, 1, 0)
-                )
-                segment_features_delta_sides[side] = F.pad(
-                    segment_features_delta_sides[side], (0, 0, 1, 0)
-                )
-                segment_features_sides_len[side][0] += 1
+            # TODO: This used to pad the sides. I don't think it's necessary to do this. confirm and remove this section
+            # for side in segment_features_delta_sides:
+            #     segment_features_sides[side] = F.pad(
+            #         segment_features_sides[side], (0, 0, 1, 0)
+            #     )
+            #     segment_features_delta_sides[side] = F.pad(
+            #         segment_features_delta_sides[side], (0, 0, 1, 0)
+            #     )
+            #     segment_features_sides_len[side][0] += 1
 
             transcript = [""] + transcript
 
@@ -218,6 +250,9 @@ class ConversationDataset(Dataset):
         else:
             raise Exception("Oh no")
 
+        if segment_embeddings is not None:
+            segment_embeddings = segment_embeddings.unsqueeze(0)
+
         return ConversationData(
             conv_id=[conv_id],
             segment_features=segment_features.unsqueeze(0),
@@ -228,8 +263,9 @@ class ConversationDataset(Dataset):
             predict_next=predict_next.unsqueeze(0),
             history_mask_a=history_mask_a.unsqueeze(0),
             history_mask_b=history_mask_b.unsqueeze(0),
-            embeddings=embeddings,
-            embeddings_segment_len=embeddings_turn_len,
+            word_embeddings=word_embeddings,
+            embeddings_len=word_embeddings_len,
+            segment_embeddings=segment_embeddings,
             num_segments=[segment_features.shape[0]],
             speaker_id=[speaker_id],
             speaker_id_idx=speaker_id_idx.unsqueeze(0),

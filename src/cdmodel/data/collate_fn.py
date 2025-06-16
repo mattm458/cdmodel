@@ -13,8 +13,13 @@ def collate_fn(batches: list[ConversationData]) -> ConversationData:
     conv_id_all: Final[list[int]] = []
     segment_features_all: Final[list[Tensor]] = []
     segment_features_delta_all: Final[list[Tensor]] = []
-    embeddings_all: Final[list[Tensor]] = []
-    embeddings_segment_len_all: Final[list[Tensor]] = []
+
+    word_embeddings_all: Final[list[Tensor]] = []
+    word_embeddings_len_all: Final[list[Tensor]] = []
+
+    segment_embeddings_all: Final[list[Tensor]] = []
+    segment_embeddings_len_all: Final[list[int]] = []
+
     num_segments_all: Final[list[int]] = []
     speaker_id_all: Final[list[list[int]]] = []
     speaker_id_idx_all: Final[list[Tensor]] = []
@@ -46,8 +51,14 @@ def collate_fn(batches: list[ConversationData]) -> ConversationData:
         conv_id_all.extend(batch.conv_id)
         segment_features_all.append(batch.segment_features.squeeze(0))
         segment_features_delta_all.append(batch.segment_features_delta.squeeze(0))
-        embeddings_all.append(batch.embeddings)
-        embeddings_segment_len_all.append(batch.embeddings_segment_len)
+
+        if batch.word_embeddings is not None and batch.embeddings_len is not None:
+            word_embeddings_all.append(batch.word_embeddings)
+            word_embeddings_len_all.append(batch.embeddings_len)
+        elif batch.segment_embeddings is not None:
+            segment_embeddings_all.append(batch.segment_embeddings.squeeze(0))
+            segment_embeddings_len_all.append(batch.segment_embeddings.shape[1])
+
         num_segments_all.extend(batch.num_segments)
         speaker_id_all.extend(batch.speaker_id)
         speaker_id_idx_all.append(batch.speaker_id_idx.squeeze(0))
@@ -55,9 +66,12 @@ def collate_fn(batches: list[ConversationData]) -> ConversationData:
         speaker_role_idx_all.append(batch.speaker_role_idx.squeeze(0))
         role_speaker_assignment_all.extend(batch.role_speaker_assignment)
         role_speaker_assignment_idx_all.extend(batch.role_speaker_assignment_idx)
-        max_embeddings_len: int = int(batch.embeddings_segment_len.max().item())
-        if longest_embedding_segment < max_embeddings_len:
-            longest_embedding_segment = max_embeddings_len
+
+        max_embeddings_len: int | None = None
+        if batch.word_embeddings is not None and batch.embeddings_len is not None:
+            max_embeddings_len = int(batch.embeddings_len.max().item())
+            if longest_embedding_segment < max_embeddings_len:
+                longest_embedding_segment = max_embeddings_len
 
         for role, t in batch.segment_features_sides.items():
             segment_features_sides_all[role].append(t.squeeze(0))
@@ -102,25 +116,36 @@ def collate_fn(batches: list[ConversationData]) -> ConversationData:
             t_list, batch_first=True
         )
 
-    # Embeddings are stored in a 3-dimensional tensor with the following dimensions:
-    #
-    #    (conversation segments, words, embedding dimension)
-    #
-    # To make it possible for all turns can be encoded in parallel, all segments from
-    # all conversations are concatenated along the first axis. After encoding, it is the
-    # model's responsibility to break up the result back into individual conversations.
-    embeddings: Final[Tensor] = torch.cat(
-        [
-            F.pad(x, (0, 0, 0, longest_embedding_segment - x.shape[1]))
-            for x in embeddings_all
-        ],
-        dim=0,
-    )
+    word_embeddings: Tensor | None = None
+    embeddings_len: Tensor | None = None
+    segment_embeddings: Tensor | None = None
 
-    # Similarly to how the embeddings are represented, the embedding segment lengths are
-    # also concatenated along a single dimension. It is the model's responsibility to divide
-    # sequences of lengths into individual conversations.
-    embeddings_segment_len: Final[Tensor] = torch.cat(embeddings_segment_len_all, dim=0)
+    if len(word_embeddings_all) > 0 and len(word_embeddings_len_all) > 0:
+        # Embeddings are stored in a 3-dimensional tensor with the following dimensions:
+        #
+        #    (conversation segments, words, embedding dimension)
+        #
+        # To make it possible for all turns can be encoded in parallel, all segments from
+        # all conversations are concatenated along the first axis. After encoding, it is the
+        # model's responsibility to break up the result back into individual conversations.
+        word_embeddings = torch.cat(
+            [
+                F.pad(x, (0, 0, 0, longest_embedding_segment - x.shape[1]))
+                for x in word_embeddings_all
+            ],
+            dim=0,
+        )
+
+        # Similarly to how the embeddings are represented, the embedding segment lengths are
+        # also concatenated along a single dimension. It is the model's responsibility to divide
+        # sequences of lengths into individual conversations.
+        embeddings_len = torch.cat(word_embeddings_len_all, dim=0)
+    elif len(segment_embeddings_all) > 0 and len(segment_embeddings_len_all) > 0:
+
+        segment_embeddings = nn.utils.rnn.pad_sequence(
+            segment_embeddings_all, batch_first=True
+        )
+        embeddings_len = torch.tensor(segment_embeddings_len_all)
 
     num_segments: Final[list[int]] = num_segments_all
 
@@ -152,8 +177,9 @@ def collate_fn(batches: list[ConversationData]) -> ConversationData:
         segment_features_sides=segment_features_sides,
         segment_features_sides_len=segment_features_sides_len,
         segment_features_delta_sides=segment_features_delta_sides,
-        embeddings=embeddings,
-        embeddings_segment_len=embeddings_segment_len,
+        word_embeddings=word_embeddings,
+        embeddings_len=embeddings_len,
+        segment_embeddings=segment_embeddings,
         num_segments=num_segments,
         speaker_id=speaker_id,
         speaker_id_idx=speaker_id_idx,

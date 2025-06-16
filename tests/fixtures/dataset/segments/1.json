@@ -1,0 +1,57 @@
+{
+    "transcript": [
+        "But the plans were on display...",
+        "On display? I eventually had to go down to the cellar to find them.",
+        "That's the display department.",
+        "With a flashlight.",
+        "Ah, well, the lights had probably gone.",
+        "So had the stairs.",
+        "But look, you found the notice, didn't you?",
+        "Yes, yes I did.",
+        "It was on display in the bottom of a locked filing cabinet stuck in a disused lavatory with a sign on the door saying 'Beware of the Leopard.'"
+    ],
+    "speaker_id": [
+        1001,
+        1002,
+        1001,
+        1002,
+        1001,
+        1002,
+        1001,
+        1002,
+        1002
+    ],
+    "pitch_mean": [
+        107.92195223922002,
+        119.28643338016893,
+        215.90907984572178,
+        137.7077389250462,
+        101.7560733131713,
+        210.40276024763796,
+        279.6653935931351,
+        112.39840323585558,
+        187.57866173094928
+    ],
+    "pitch_range": [
+        28.702629234970885,
+        102.66240489622339,
+        257.702410054672,
+        349.87378562077174,
+        11.291414481921123,
+        266.5809735923401,
+        433.59880832123093,
+        14.695465314639605,
+        212.10380763391674
+    ],
+    "intensity_mean": [
+        63.953490481729915,
+        63.09927399823508,
+        64.23841609500512,
+        70.00729889012699,
+        68.38463273621161,
+        66.43909483932461,
+        58.39038042222808,
+        67.00772334351312,
+        73.33511720475117
+    ]
+}
