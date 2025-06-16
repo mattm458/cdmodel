@@ -549,6 +549,10 @@ class CDModel(pl.LightningModule):
             )
 
         # Iterate through the conversation
+        autoregress_mask_segmented = timestep_split(
+            F.pad(predict_next[:, :-1], (1, 0)) & is_autoregressive
+        )
+
         ist_embeddings: Tensor | None = None
         for i in range(num_segments - 1):
             predict_cat.append(predict_prev.unsqueeze(1))
@@ -561,7 +565,7 @@ class CDModel(pl.LightningModule):
             # Create a mask that contains True if a previously predicted feature should be fed
             # back into the model, or False if the ground truth value should be used instead
             # (i.e., teacher forcing)
-            autoregress_mask_i = predict_prev * is_autoregressive
+            autoregress_mask_i = autoregress_mask_segmented[i]
             features_i = features_arr[i].clone()
 
             if self.output_format == CDModelPredictFormat.value:
