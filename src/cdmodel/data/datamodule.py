@@ -26,6 +26,7 @@ class ConversationDataModule(LightningDataModule):
         num_workers: int,
         role_type: str,
         role_assignment_strategy: str,
+        embeddings_type: str,
         shuffle_training: bool = True,
         drop_last_training: bool = True,
     ):
@@ -38,6 +39,7 @@ class ConversationDataModule(LightningDataModule):
         self.batch_size: Final[int] = batch_size
         self.num_workers: Final[int] = num_workers
         self.role_type: Final[PredictionType] = PredictionType[role_type]
+        self.embeddings_type: Final[str] = embeddings_type
         self.shuffle_training: Final[bool] = shuffle_training
         self.drop_last_training: Final[bool] = drop_last_training
 
@@ -72,6 +74,7 @@ class ConversationDataModule(LightningDataModule):
                         set="train",
                     ),
                     speaker_ids=self.speaker_ids,
+                    embeddings_type=self.embeddings_type,
                 )
                 self.dataset_validate = ConversationDataset(
                     dataset_dir=self.dataset_dir,
@@ -85,6 +88,7 @@ class ConversationDataModule(LightningDataModule):
                         set="val",
                     ),
                     speaker_ids=self.speaker_ids,
+                    embeddings_type=self.embeddings_type,
                 )
             case "validate":
                 self.dataset_validate = ConversationDataset(
@@ -99,6 +103,7 @@ class ConversationDataModule(LightningDataModule):
                         set="val",
                     ),
                     speaker_ids=self.speaker_ids,
+                    embeddings_type=self.embeddings_type,
                 )
             case "test":
                 self.dataset_test = ConversationDataset(
@@ -113,6 +118,7 @@ class ConversationDataModule(LightningDataModule):
                         set="test",
                     ),
                     speaker_ids=self.speaker_ids,
+                    embeddings_type=self.embeddings_type,
                 )
             case "predict":
                 self.dataset_predict = ConversationDataset(
@@ -127,6 +133,7 @@ class ConversationDataModule(LightningDataModule):
                         set="test",
                     ),
                     speaker_ids=self.speaker_ids,
+                    embeddings_type=self.embeddings_type,
                 )
 
     def train_dataloader(self) -> DataLoader:

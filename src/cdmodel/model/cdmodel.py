@@ -130,9 +130,13 @@ class CDModel(pl.LightningModule):
         ext_ist_offset: Optional[
             Tensor
         ] = None,  # Optional offsets to apply to IST weights for testing
+        embedding_type: str | None = None,
     ):
         super().__init__()
         self.save_hyperparameters()
+
+        if use_embeddings and embedding_type not in {"segment", "word"}:
+            raise Exception("embedding_type must be one of either 'segment' or 'word")
 
         self.lr: Final[float] = lr
 
@@ -187,10 +191,11 @@ class CDModel(pl.LightningModule):
         # segment. At each segment, it accepts a sequence of word embeddings and outputs
         # a vector of size `embedding_encoder_out_dim`.
         self.use_embeddings: Final[bool] = use_embeddings
+        self.embedding_type: Final[str | None] = embedding_type
 
         self.embedding_encoder: EmbeddingEncoder | None = None
 
-        if self.use_embeddings:
+        if self.use_embeddings and self.embedding_type == "word":
             self.embedding_encoder = EmbeddingEncoder(
                 embedding_dim=embedding_dim,
                 encoder_out_dim=embedding_encoder_out_dim,
@@ -449,7 +454,8 @@ class CDModel(pl.LightningModule):
         predict_next: Tensor,
         history_mask_a: Tensor,
         history_mask_b: Tensor,
-        embeddings: Tensor,
+        word_embeddings: Tensor | None,
+        segment_embeddings: Tensor | None,
         embeddings_len: Tensor,
         conv_len: list[int],
         speaker_role_idx: Tensor,
@@ -461,11 +467,16 @@ class CDModel(pl.LightningModule):
         device = segment_features.device
 
         embeddings_encoded: Tensor | None = None
-        if self.embedding_encoder is not None:
-            embeddings_encoded, _ = self.embedding_encoder(embeddings, embeddings_len)
-            embeddings_encoded = nn.utils.rnn.pad_sequence(
-                torch.split(embeddings_encoded, conv_len), batch_first=True  # type: ignore
-            )
+        if self.use_embeddings:
+            if self.embedding_type == "word" and self.embedding_encoder is not None:
+                embeddings_encoded, _ = self.embedding_encoder(
+                    word_embeddings, embeddings_len
+                )
+                embeddings_encoded = nn.utils.rnn.pad_sequence(
+                    torch.split(embeddings_encoded, conv_len), batch_first=True  # type: ignore
+                )
+            elif self.embedding_type == "segment":
+                embeddings_encoded = segment_embeddings
 
         if self.speaker_role_encoding == SpeakerRoleEncoding.one_hot:
             speaker_role_encoded = one_hot_drop_0(speaker_role_idx, num_classes=3)
@@ -775,7 +786,8 @@ class CDModel(pl.LightningModule):
             predict_next=batch.predict_next,
             history_mask_a=batch.history_mask_a,
             history_mask_b=batch.history_mask_b,
-            embeddings=batch.word_embeddings,
+            word_embeddings=batch.word_embeddings,
+            segment_embeddings=batch.segment_embeddings,
             embeddings_len=batch.embeddings_len,
             conv_len=batch.num_segments,
             speaker_role_idx=batch.speaker_role_idx,
@@ -880,7 +892,8 @@ class CDModel(pl.LightningModule):
             predict_next=batch.predict_next,
             history_mask_a=batch.history_mask_a,
             history_mask_b=batch.history_mask_b,
-            embeddings=batch.word_embeddings,
+            word_embeddings=batch.word_embeddings,
+            segment_embeddings=batch.segment_embeddings,
             embeddings_len=batch.embeddings_len,
             conv_len=batch.num_segments,
             speaker_role_idx=batch.speaker_role_idx,
@@ -985,7 +998,8 @@ class CDModel(pl.LightningModule):
             predict_next=batch.predict_next,
             history_mask_a=batch.history_mask_a,
             history_mask_b=batch.history_mask_b,
-            embeddings=batch.word_embeddings,
+            word_embeddings=batch.word_embeddings,
+            segment_embeddings=batch.segment_embeddings,
             embeddings_len=batch.embeddings_len,
             conv_len=batch.num_segments,
             speaker_role_idx=batch.speaker_role_idx,
