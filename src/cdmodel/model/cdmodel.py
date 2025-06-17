@@ -227,6 +227,7 @@ class CDModel(pl.LightningModule):
 
         # Main encoder for input features
         print(f"Encoder: encoder_hidden_dim = {encoder_hidden_dim}")
+        self.encoder_hidden_dim: Final[int] = encoder_hidden_dim
         self.encoder = Encoder(
             in_dim=encoder_in_dim,
             hidden_dim=encoder_hidden_dim,
@@ -510,7 +511,9 @@ class CDModel(pl.LightningModule):
         ]
 
         # Lists to store accumulated conversation data from the main loop below
-        history_cat: list[Tensor] = []
+        history_tensor = torch.zeros(
+            (batch_size, num_segments - 1, self.encoder_hidden_dim), device=device
+        )
         decoded_all_cat: list[Tensor] = []
 
         a_scores_all: list[Tensor] = []
@@ -640,10 +643,10 @@ class CDModel(pl.LightningModule):
             # Encode the input and append it to the history.
             encoded, encoder_hidden = self.encoder(encoder_in, encoder_hidden)
 
-            history_cat.append(encoded)
+            history_tensor[:, i, :] = encoded
 
             # Concatenate the history tensor and select specific batch indexes where we are predicting
-            history = torch.stack(history_cat, dim=1)
+            history = history_tensor[:, : i + 1, :]
 
             if self.ext_ist_encoded_concat and ist_embeddings is not None:
                 history = torch.concat(
