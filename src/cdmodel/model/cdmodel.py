@@ -344,8 +344,10 @@ class CDModel(pl.LightningModule):
         # Initialize the decoders
         if num_decoders == 1:
             decoder_out_dim = len(feature_names)
+            self.features_per_decoder = decoder_out_dim
         elif num_decoders == len(feature_names):
             decoder_out_dim = 1
+            self.features_per_decoder = 1
         else:
             # TODO: Make this a more specific execption type
             raise Exception(
@@ -513,7 +515,9 @@ class CDModel(pl.LightningModule):
         history_tensor = torch.zeros(
             (batch_size, num_segments - 1, self.encoder_hidden_dim), device=device
         )
-        decoded_all_cat: list[Tensor] = []
+        decoded_all_tensor = torch.zeros(
+            (batch_size, num_segments - 1, self.num_features), device=device
+        )
 
         a_scores_all: list[Tensor] = []
         b_scores_all: list[Tensor] = []
@@ -728,14 +732,16 @@ class CDModel(pl.LightningModule):
 
                 decoder_out, h_out, decoder_high = decoder(decoder_in, h)
                 decoder_hidden[decoder_idx] = h_out
-                features_pred_cat.append(decoder_out)
+
+                decoded_all_tensor[
+                    :, i, decoder_idx : self.features_per_decoder + 1
+                ] = decoder_out
 
             a_mask_cat.append(a_mask)
             b_mask_cat.append(b_mask)
 
             # Assemble final predicted features
-            features_pred = torch.cat(features_pred_cat, dim=-1)
-            decoded_all_cat.append(features_pred.unsqueeze(1))
+            features_prev = decoded_all_tensor[:, i, :]
 
             if len(a_scores_cat) > 0:
                 a_scores_all.append(torch.cat(a_scores_cat, dim=1))
@@ -747,10 +753,8 @@ class CDModel(pl.LightningModule):
             a_mask_all.append(torch.cat(a_mask_cat, dim=1))
             b_mask_all.append(torch.cat(b_mask_cat, dim=1))
 
-            features_prev = features_pred
-
         return CDModelOutput(
-            predicted_segment_features=torch.cat(decoded_all_cat, dim=1),
+            predicted_segment_features=decoded_all_tensor,
             predict_next=predict_next,
             ist_embeddings=ist_embeddings,
             ist_weights_one_shot=(
