@@ -524,7 +524,6 @@ class CDModel(pl.LightningModule):
 
         # Placeholders to contain predicted features carried over from the previous timestep
         features_prev = torch.zeros((batch_size, self.num_features), device=device)
-        predict_prev = torch.zeros((batch_size,), device=device, dtype=torch.bool)
 
         # IST Tokens
         ist_embeddings_one_shot: OrderedDict[Role, Tensor] | None = None
@@ -751,7 +750,6 @@ class CDModel(pl.LightningModule):
             a_mask_all.append(torch.cat(a_mask_cat, dim=1))
             b_mask_all.append(torch.cat(b_mask_cat, dim=1))
 
-            predict_prev = predict_next_segmented[i]
             features_prev = features_pred
 
         return CDModelOutput(
