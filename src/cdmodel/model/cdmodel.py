@@ -526,8 +526,6 @@ class CDModel(pl.LightningModule):
         features_prev = torch.zeros((batch_size, self.num_features), device=device)
         predict_prev = torch.zeros((batch_size,), device=device, dtype=torch.bool)
 
-        predict_cat: list[Tensor] = []
-
         # IST Tokens
         ist_embeddings_one_shot: OrderedDict[Role, Tensor] | None = None
         ist_weights_one_shot: OrderedDict[Role, Tensor] | None = None
@@ -562,8 +560,6 @@ class CDModel(pl.LightningModule):
 
         ist_embeddings: Tensor | None = None
         for i in range(num_segments - 1):
-            predict_cat.append(predict_prev.unsqueeze(1))
-
             ist_embeddings_cat: list[Tensor] = []
             if ist_embeddings_one_shot is not None:
                 ist_embeddings_cat.extend(list(ist_embeddings_one_shot.values()))
@@ -757,8 +753,6 @@ class CDModel(pl.LightningModule):
 
             predict_prev = predict_next_segmented[i]
             features_prev = features_pred
-
-        predict_cat.append(predict_prev.unsqueeze(1))
 
         return CDModelOutput(
             predicted_segment_features=torch.cat(decoded_all_cat, dim=1),
