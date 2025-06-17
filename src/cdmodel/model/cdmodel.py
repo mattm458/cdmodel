@@ -194,6 +194,7 @@ class CDModel(pl.LightningModule):
         self.embedding_type: Final[str | None] = embedding_type
 
         self.embedding_encoder: EmbeddingEncoder | None = None
+        self.embedding_linear = None
 
         if self.use_embeddings and self.embedding_type == "word":
             self.embedding_encoder = EmbeddingEncoder(
@@ -203,6 +204,9 @@ class CDModel(pl.LightningModule):
                 encoder_dropout=embedding_encoder_dropout,
                 attention_dim=embedding_encoder_att_dim,
             )
+        elif self.use_embeddings and self.embedding_type == "segment":
+            # TODO: Make this configurable
+            self.embedding_linear = nn.Sequential(nn.Linear(768, 50), nn.Tanh())
 
         # Segment encoder
         # =====================
@@ -476,7 +480,7 @@ class CDModel(pl.LightningModule):
                     torch.split(embeddings_encoded, conv_len), batch_first=True  # type: ignore
                 )
             elif self.embedding_type == "segment":
-                embeddings_encoded = segment_embeddings
+                embeddings_encoded = self.embedding_linear(segment_embeddings)
 
         if self.speaker_role_encoding == SpeakerRoleEncoding.one_hot:
             speaker_role_encoded = one_hot_drop_0(speaker_role_idx, num_classes=3)
@@ -818,9 +822,16 @@ class CDModel(pl.LightningModule):
                 f"Output format {self.output_format} not supported!"
             )
 
+        # TODO: Formalize this - Are we checking both sides or just our own outputs?
+        # max_len = max(batch.num_segments) - 1
+        # mask = torch.arange(max_len).expand(batch_size, max_len) < torch.tensor(
+        #     max_len
+        # )  # .unsqueeze(2)
+        mask = results.predict_next
+
         loss = F.mse_loss(
-            results.predicted_segment_features[results.predict_next],
-            y[results.predict_next],
+            results.predicted_segment_features[mask],
+            y[mask],
         )
 
         self.log(
@@ -867,20 +878,20 @@ class CDModel(pl.LightningModule):
         #         sync_dist=True,
         #     )
 
-        for feature_idx, feature_name in enumerate(self.feature_names):
-            self.log(
-                f"training_loss_l1_{feature_name}",
-                F.smooth_l1_loss(
-                    results.predicted_segment_features[results.predict_next][
-                        :, feature_idx
-                    ],
-                    y[results.predict_next][:, feature_idx],
-                ).detach(),
-                on_epoch=True,
-                on_step=True,
-                sync_dist=True,
-                batch_size=batch_size,
-            )
+        # for feature_idx, feature_name in enumerate(self.feature_names):
+        #     self.log(
+        #         f"training_loss_l1_{feature_name}",
+        #         F.smooth_l1_loss(
+        #             results.predicted_segment_features[results.predict_next][
+        #                 :, feature_idx
+        #             ],
+        #             y[results.predict_next][:, feature_idx],
+        #         ).detach(),
+        #         on_epoch=True,
+        #         on_step=True,
+        #         sync_dist=True,
+        #         batch_size=batch_size,
+        #     )
 
         return loss
 
@@ -970,20 +981,20 @@ class CDModel(pl.LightningModule):
                 batch_size=batch_size,
             )
 
-        for feature_idx, feature_name in enumerate(self.feature_names):
-            self.log(
-                f"validation_loss_l1_{feature_name}",
-                F.smooth_l1_loss(
-                    results.predicted_segment_features[results.predict_next][
-                        :, feature_idx
-                    ],
-                    y[results.predict_next][:, feature_idx],
-                ),
-                on_epoch=True,
-                on_step=False,
-                sync_dist=True,
-                batch_size=batch_size,
-            )
+        # for feature_idx, feature_name in enumerate(self.feature_names):
+        #     self.log(
+        #         f"validation_loss_l1_{feature_name}",
+        #         F.smooth_l1_loss(
+        #             results.predicted_segment_features[results.predict_next][
+        #                 :, feature_idx
+        #             ],
+        #             y[results.predict_next][:, feature_idx],
+        #         ),
+        #         on_epoch=True,
+        #         on_step=False,
+        #         sync_dist=True,
+        #         batch_size=batch_size,
+        #     )
 
         # if batch_idx == 0:
         #     print(results.ist_weights[:10])
@@ -1020,12 +1031,12 @@ class CDModel(pl.LightningModule):
             )
 
         loss = F.mse_loss(
-            results.predicted_segment_features[results.predict_next],
-            y[results.predict_next],
+            results.predicted_segment_features,  # [results.predict_next],
+            y,  # [results.predict_next],
         )
         loss_l1 = F.smooth_l1_loss(
-            results.predicted_segment_features[results.predict_next],
-            y[results.predict_next],
+            results.predicted_segment_features,  # [results.predict_next],
+            y,  # [results.predict_next],
         )
 
         return batch, loss, loss_l1, results
