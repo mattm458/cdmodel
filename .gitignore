@@ -1,6 +1,7 @@
 # Temporary gitignores for now
 src/cdmodel/preprocessing/
 paper_notebooks/
+old_experiments/
 
 .vscode
 
