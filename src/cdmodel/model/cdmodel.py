@@ -493,7 +493,6 @@ class CDModel(pl.LightningModule):
         speaker_role_idx_segmented = timestep_split(speaker_role_idx)
         speaker_role_encoded_segmented = timestep_split(speaker_role_encoded)
         features_arr = timestep_split(segment_features)
-        predict_next_segmented = timestep_split(predict_next)
         segment_features_delta_segmented = timestep_split(segment_features_delta)
 
         embeddings_encoded_segmented: list[Tensor] | None = None
@@ -658,7 +657,6 @@ class CDModel(pl.LightningModule):
             b_mask_cat: list[Tensor] = []
             combined_scores_cat: list[Tensor] = []
             features_pred_cat: list[Tensor] = []
-            decoder_high_cat: list[Tensor] = []
 
             self.attention_sides = "role"
             if self.attention_sides == "perspective":
@@ -731,7 +729,6 @@ class CDModel(pl.LightningModule):
                 decoder_out, h_out, decoder_high = decoder(decoder_in, h)
                 decoder_hidden[decoder_idx] = h_out
                 features_pred_cat.append(decoder_out)
-                decoder_high_cat.append(decoder_high.detach().clone())
 
             a_mask_cat.append(a_mask)
             b_mask_cat.append(b_mask)
