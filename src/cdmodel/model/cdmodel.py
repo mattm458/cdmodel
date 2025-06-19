@@ -585,6 +585,7 @@ class CDModel(pl.LightningModule):
                 )
             elif self.output_format == CDModelPredictFormat.delta:
                 if i > 0:
+                    # TODO: This shouldn't be an array, it should just be a variable containing the previous outputs
                     features_i[autoregress_mask_i] = features_input_arr[i - 1][
                         autoregress_mask_i
                     ] + features_prev[autoregress_mask_i].detach().type(
@@ -597,10 +598,9 @@ class CDModel(pl.LightningModule):
                         .clone()
                         .type(features_i.dtype)
                     )
+                features_input_arr.append(features_i)
             else:
                 raise NotImplementedError(self.output_format)
-
-            features_input_arr.append(features_i)
 
             # If we're using the incremental IST encoder, encode now
             if (
