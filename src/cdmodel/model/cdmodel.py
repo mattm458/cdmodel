@@ -663,7 +663,6 @@ class CDModel(pl.LightningModule):
             a_mask_cat: list[Tensor] = []
             b_mask_cat: list[Tensor] = []
             combined_scores_cat: list[Tensor] = []
-            features_pred_cat: list[Tensor] = []
 
             self.attention_sides = "role"
             if self.attention_sides == "perspective":
