@@ -26,7 +26,7 @@ class ConversationDataModule(LightningDataModule):
         num_workers: int,
         role_type: str,
         role_assignment_strategy: str,
-        embeddings_type: str,
+        embeddings_type: str | None,
         shuffle_training: bool = True,
         drop_last_training: bool = True,
     ):
@@ -39,7 +39,7 @@ class ConversationDataModule(LightningDataModule):
         self.batch_size: Final[int] = batch_size
         self.num_workers: Final[int] = num_workers
         self.role_type: Final[PredictionType] = PredictionType[role_type]
-        self.embeddings_type: Final[str] = embeddings_type
+        self.embeddings_type: Final[str | None] = embeddings_type
         self.shuffle_training: Final[bool] = shuffle_training
         self.drop_last_training: Final[bool] = drop_last_training
 
