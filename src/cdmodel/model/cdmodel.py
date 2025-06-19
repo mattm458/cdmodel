@@ -103,6 +103,7 @@ class CDModel(pl.LightningModule):
         num_decoders: int,
         speaker_role_encoding: str,
         role_type: str,
+        train_both_sides: bool,
         lr: float,
         predict_format: str,
         autoregressive_training: bool,
@@ -139,6 +140,8 @@ class CDModel(pl.LightningModule):
             raise Exception("embedding_type must be one of either 'segment' or 'word")
 
         self.lr: Final[float] = lr
+
+        self.train_both_sides: Final[bool] = train_both_sides
 
         self.feature_names: Final[list[str]] = feature_names
         self.num_features: Final[int] = len(feature_names)
@@ -819,11 +822,13 @@ class CDModel(pl.LightningModule):
             )
 
         # TODO: Formalize this - Are we checking both sides or just our own outputs?
-        # max_len = max(batch.num_segments) - 1
-        # mask = torch.arange(max_len).expand(batch_size, max_len) < torch.tensor(
-        #     max_len
-        # )  # .unsqueeze(2)
-        mask = results.predict_next
+        if self.train_both_sides:
+            max_len = max(batch.num_segments) - 1
+            mask = torch.arange(max_len).expand(batch_size, max_len) < (
+                torch.tensor(batch.num_segments).unsqueeze(1) - 1
+            )
+        else:
+            mask = results.predict_next
 
         loss = F.mse_loss(
             results.predicted_segment_features[mask],
