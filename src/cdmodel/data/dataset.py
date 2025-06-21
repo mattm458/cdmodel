@@ -1,26 +1,26 @@
-import json
 from os import path
 from typing import Final
 
+import orjson
 import torch
 from torch import Tensor
-from torch.functional import F
+from torch.nn import functional as F
 from torch.utils.data import Dataset
 
 from cdmodel.common import ConversationData
 from cdmodel.common.role_assignment import (
-    BothPredictionRole,
     AgentPartnerPredictionRole,
+    BothPredictionRole,
+    PredictionType,
     Role,
     RoleAssignmentStrategy,
-    PredictionType,
     assign_speaker_roles,
 )
 
 
 def load_segment_data(dataset_dir: str, conv_id: int) -> dict:
     with open(path.join(dataset_dir, "segments", f"{conv_id}.json")) as infile:
-        return json.load(infile)
+        return orjson.loads(infile.read())
 
 
 def load_embeddings(dataset_dir: str, conv_id: int, embeddings_dir: str) -> Tensor:
