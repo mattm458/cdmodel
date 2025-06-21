@@ -88,6 +88,9 @@ class CDModel(pl.LightningModule):
         embedding_encoder_dropout: float,
         embedding_encoder_att_dim: int,
         use_embeddings: bool,
+        use_embeddings_encoder: bool,
+        use_embeddings_att: bool,
+        use_embeddings_decoder: bool,
         encoder_hidden_dim: int,
         encoder_num_layers: int,
         encoder_dropout: float,
@@ -194,6 +197,9 @@ class CDModel(pl.LightningModule):
         # segment. At each segment, it accepts a sequence of word embeddings and outputs
         # a vector of size `embedding_encoder_out_dim`.
         self.use_embeddings: Final[bool] = use_embeddings
+        self.use_embeddings_encoder: Final[bool] = use_embeddings_encoder
+        self.use_embeddings_att: Final[bool] = use_embeddings_att
+        self.use_embeddings_decoder: Final[bool] = use_embeddings_decoder
         self.embedding_type: Final[str | None] = embedding_type
 
         self.embedding_encoder: EmbeddingEncoder | None = None
@@ -223,7 +229,7 @@ class CDModel(pl.LightningModule):
             + (2 if self.encoder_speaker_role else 0)  # One-hot speaker role vector
         )
 
-        if self.use_embeddings:
+        if self.use_embeddings and self.use_embeddings_encoder:
             encoder_in_dim += (
                 embedding_encoder_out_dim  # Dimensions of the embedding encoder output
             )
@@ -274,7 +280,7 @@ class CDModel(pl.LightningModule):
             + (2 if self.att_context_speaker_role else 0)  # One-hot speaker role vector
         )
 
-        if self.use_embeddings:
+        if self.use_embeddings and self.use_embeddings_att:
             att_context_dim += embedding_encoder_att_dim  # The encoded representation of the upcoming segment transcript
 
         # Initialize the attention mechanisms
@@ -341,7 +347,7 @@ class CDModel(pl.LightningModule):
             + ext_ist_decoder_in_dim  # IST token dimensions if active
         )
 
-        if self.use_embeddings:
+        if self.use_embeddings and use_embeddings_decoder:
             decoder_in_dim += embedding_encoder_out_dim  # Size of the embedding encoder output for upcoming segment text
 
         # Initialize the decoders
@@ -630,16 +636,17 @@ class CDModel(pl.LightningModule):
             # and the previously-encoded embeddings.
             encoder_in_arr = [features_i]
 
-            if embeddings_encoded_segmented is not None:
+            if (
+                embeddings_encoded_segmented is not None
+                and self.use_embeddings
+                and self.use_embeddings_encoder
+            ):
                 encoder_in_arr.append(embeddings_encoded_segmented[i])
 
             if self.encoder_speaker_role:
                 encoder_in_arr.append(speaker_role_encoded_segmented[i])
 
-            encoder_in: Tensor = torch.cat(
-                encoder_in_arr,
-                dim=-1,
-            )
+            encoder_in: Tensor = torch.cat(encoder_in_arr, dim=-1)
 
             # Encode the input and append it to the history.
             encoded, encoder_hidden = self.encoder(encoder_in, encoder_hidden)
@@ -695,7 +702,11 @@ class CDModel(pl.LightningModule):
             ):
                 attention_context: list[Tensor] = []
                 attention_context.extend(h)
-                if embeddings_encoded_segmented is not None:
+                if (
+                    embeddings_encoded_segmented is not None
+                    and self.use_embeddings
+                    and self.use_embeddings_att
+                ):
                     attention_context.append(embeddings_encoded_segmented[i + 1])
                 if self.att_context_speaker_role:
                     attention_context.append(speaker_role_encoded_segmented[i + 1])
@@ -721,7 +732,11 @@ class CDModel(pl.LightningModule):
                     history_encoded,
                 ]
 
-                if embeddings_encoded_segmented is not None:
+                if (
+                    embeddings_encoded_segmented is not None
+                    and self.use_embeddings
+                    and self.use_embeddings_decoder
+                ):
                     decoder_in_arr.append(embeddings_encoded_segmented[i + 1])
 
                 if self.decoder_speaker_role:
