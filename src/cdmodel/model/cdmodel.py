@@ -88,6 +88,7 @@ class CDModel(pl.LightningModule):
         embedding_encoder_dropout: float,
         embedding_encoder_att_dim: int,
         use_embeddings: bool,
+        use_embeddings_rnn: bool,
         use_embeddings_encoder: bool,
         use_embeddings_att: bool,
         use_embeddings_decoder: bool,
@@ -191,12 +192,10 @@ class CDModel(pl.LightningModule):
 
         self.ext_ist_offset: Final[Tensor | None] = ext_ist_offset
 
-        # Embedding Encoder
+        # Embeddings
         # =====================
-        # The embedding encoder encodes textual data associated with each conversational
-        # segment. At each segment, it accepts a sequence of word embeddings and outputs
-        # a vector of size `embedding_encoder_out_dim`.
         self.use_embeddings: Final[bool] = use_embeddings
+        self.use_embeddings_rnn: Final[bool] = use_embeddings_rnn
         self.use_embeddings_encoder: Final[bool] = use_embeddings_encoder
         self.use_embeddings_att: Final[bool] = use_embeddings_att
         self.use_embeddings_decoder: Final[bool] = use_embeddings_decoder
@@ -215,7 +214,10 @@ class CDModel(pl.LightningModule):
             )
         elif self.use_embeddings and self.embedding_type == "segment":
             # TODO: Make this configurable
-            self.embedding_linear = nn.Sequential(nn.Linear(768, 50), nn.Tanh())
+            self.embedding_linear = nn.Sequential(nn.Linear(768, 768), nn.Tanh())
+
+        if self.use_embeddings and self.use_embeddings_rnn:
+            self.embedding_rnn = nn.GRU(768, 768, batch_first=True)
 
         # Segment encoder
         # =====================
@@ -491,8 +493,21 @@ class CDModel(pl.LightningModule):
                 embeddings_encoded = nn.utils.rnn.pad_sequence(
                     torch.split(embeddings_encoded, conv_len), batch_first=True  # type: ignore
                 )
-            elif self.embedding_type == "segment":
+            elif self.embedding_type == "segment" and self.embedding_linear is not None:
                 embeddings_encoded = self.embedding_linear(segment_embeddings)
+
+            if self.use_embeddings_rnn and embeddings_encoded is not None:
+                embeddings_rnn_out, _ = self.embedding_rnn(
+                    nn.utils.rnn.pack_padded_sequence(
+                        embeddings_encoded,
+                        conv_len,
+                        batch_first=True,
+                        enforce_sorted=False,
+                    )
+                )
+                embeddings_encoded, _ = nn.utils.rnn.pad_packed_sequence(
+                    embeddings_rnn_out, batch_first=True
+                )
 
         if self.speaker_role_encoding == SpeakerRoleEncoding.one_hot:
             speaker_role_encoded = one_hot_drop_0(speaker_role_idx, num_classes=3)
