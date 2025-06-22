@@ -19,6 +19,7 @@
         "zero_pad": true
     },
     "model": {
+        "att_context_all_decoder_hidden": true,
         "att_context_speaker_role": false,
         "att_weighting_strategy": "att",
         "attention_style": "single_partner",
