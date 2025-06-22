@@ -99,9 +99,11 @@ class CDModel(pl.LightningModule):
         decoder_hidden_dim: int,
         decoder_num_layers: int,
         decoder_dropout: float,
+        decoder_output_layers: int,
         attention_style: str,
         encoder_speaker_role: bool,
         att_context_speaker_role: bool,
+        att_context_all_decoder_hidden: bool,
         att_weighting_strategy: Literal["att"] | Literal["random"] | Literal["uniform"],
         decoder_speaker_role: bool,
         num_decoders: int,
@@ -146,6 +148,10 @@ class CDModel(pl.LightningModule):
         self.lr: Final[float] = lr
 
         self.train_both_sides: Final[bool] = train_both_sides
+
+        self.att_context_all_decoder_hidden: Final[bool] = (
+            att_context_all_decoder_hidden
+        )
 
         self.feature_names: Final[list[str]] = feature_names
         self.num_features: Final[int] = len(feature_names)
@@ -276,11 +282,15 @@ class CDModel(pl.LightningModule):
         if self.ext_ist_sides == ISTSides.both:
             ext_ist_att_context_dim *= 2
 
-        att_context_dim: int = (
-            +(decoder_hidden_dim * decoder_num_layers)  # The decoder hidden state
-            + (ext_ist_att_context_dim)  # IST token dimensions if active
-            + (2 if self.att_context_speaker_role else 0)  # One-hot speaker role vector
-        )
+        att_context_dim: int = decoder_hidden_dim  # The decoder hidden state
+        if self.att_context_all_decoder_hidden:
+            att_context_dim *= decoder_num_layers
+
+        att_context_dim += +(
+            ext_ist_att_context_dim
+        ) + (  # IST token dimensions if active
+            2 if self.att_context_speaker_role else 0
+        )  # One-hot speaker role vector
 
         if self.use_embeddings and self.use_embeddings_att:
             att_context_dim += embedding_encoder_att_dim  # The encoded representation of the upcoming segment transcript
@@ -374,6 +384,7 @@ class CDModel(pl.LightningModule):
                     decoder_dropout=decoder_dropout,
                     output_dim=decoder_out_dim,
                     activation=None,
+                    output_layers=decoder_output_layers,
                 )
                 for _ in range(num_decoders)
             ]
@@ -716,7 +727,11 @@ class CDModel(pl.LightningModule):
                 )
             ):
                 attention_context: list[Tensor] = []
-                attention_context.extend(h)
+                if self.att_context_all_decoder_hidden:
+                    attention_context.extend(h)
+                else:
+                    attention_context.append(h[-1])
+
                 if (
                     embeddings_encoded_segmented is not None
                     and self.use_embeddings

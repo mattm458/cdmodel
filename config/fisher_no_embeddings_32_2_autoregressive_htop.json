@@ -19,16 +19,16 @@
         "zero_pad": true
     },
     "model": {
-        "att_context_all_decoder_hidden": true,
+        "att_context_all_decoder_hidden": false,
         "att_context_speaker_role": false,
         "att_weighting_strategy": "att",
         "attention_style": "single_partner",
         "autoregressive_inference": true,
         "autoregressive_training": true,
-        "decoder_att_dim": 128,
+        "decoder_att_dim": 32,
         "decoder_dropout": 0.0,
-        "decoder_hidden_dim": 128,
-        "decoder_num_layers": 1,
+        "decoder_hidden_dim": 32,
+        "decoder_num_layers": 2,
         "decoder_output_layers": 1,
         "decoder_speaker_role": true,
         "embedding_dim": 0,
@@ -37,8 +37,8 @@
         "embedding_encoder_num_layers": 0,
         "embedding_encoder_out_dim": 0,
         "encoder_dropout": 0.0,
-        "encoder_hidden_dim": 128,
-        "encoder_num_layers": 1,
+        "encoder_hidden_dim": 32,
+        "encoder_num_layers": 2,
         "encoder_speaker_role": true,
         "ext_ist_att_activation": "sigmoid",
         "ext_ist_att_in": false,
@@ -74,7 +74,8 @@
         "use_embeddings": false,
         "use_embeddings_att": false,
         "use_embeddings_decoder": false,
-        "use_embeddings_encoder": false
+        "use_embeddings_encoder": false,
+        "use_embeddings_rnn": false
     },
     "trainer": {
         "callbacks": [
@@ -106,7 +107,7 @@
             "class_path": "lightning.pytorch.loggers.TensorBoardLogger",
             "init_args": {
                 "default_hp_metric": false,
-                "name": "01_fisher_no_embeddings_128_1_autoregressive",
+                "name": "01_fisher_no_embeddings_32_2_autoregressive_htop",
                 "save_dir": "lightning_logs"
             }
         },

@@ -320,6 +320,7 @@ class Decoder(nn.Module):
         hidden_dim: int,
         num_layers: int,
         activation: Literal["tanh", None],
+        output_layers: int,
     ):
         super().__init__()
 
@@ -334,7 +335,15 @@ class Decoder(nn.Module):
 
         self.dropout = nn.Dropout(decoder_dropout)
 
-        linear_arr: list[nn.Module] = [nn.Linear(hidden_dim, output_dim)]
+        linear_arr: list[nn.Module] = [
+            nn.Linear(hidden_dim, hidden_dim if output_layers > 1 else output_dim)
+        ]
+        for i in range(output_layers - 1):
+            if i == output_layers - 2:
+                linear_arr.extend([nn.ELU(), nn.Linear(hidden_dim, output_dim)])
+            else:
+                linear_arr.extend([nn.ELU(), nn.Linear(hidden_dim, hidden_dim)])
+
         if activation == "tanh":
             print("Decoder: Tanh activation")
             linear_arr.append(nn.Tanh())
