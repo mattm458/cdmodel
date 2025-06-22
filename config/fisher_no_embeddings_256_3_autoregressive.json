@@ -1,0 +1,114 @@
+{
+    "data": {
+        "batch_size": 64,
+        "data_subset": "all",
+        "dataset_dir": "../conversational-dynamics-modeling/preprocessed/fisher/",
+        "embeddings_type": null,
+        "num_workers": 5,
+        "role_assignment_strategy": "both",
+        "role_type": "AgentPartner",
+        "segment_features": [
+            "pitch_mean_norm_by_conv_speaker",
+            "pitch_range_norm_by_conv_speaker",
+            "intensity_mean_vcd_norm_by_conv_speaker",
+            "jitter_norm_by_conv_speaker",
+            "shimmer_norm_by_conv_speaker",
+            "nhr_vcd_norm_by_conv_speaker",
+            "rate_norm_by_conv_speaker"
+        ],
+        "zero_pad": true
+    },
+    "model": {
+        "att_context_speaker_role": false,
+        "att_weighting_strategy": "att",
+        "attention_style": "single_partner",
+        "autoregressive_inference": true,
+        "autoregressive_training": true,
+        "decoder_att_dim": 256,
+        "decoder_dropout": 0.0,
+        "decoder_hidden_dim": 256,
+        "decoder_num_layers": 3,
+        "decoder_speaker_role": true,
+        "embedding_dim": 0,
+        "embedding_encoder_att_dim": 0,
+        "embedding_encoder_dropout": 0.0,
+        "embedding_encoder_num_layers": 0,
+        "embedding_encoder_out_dim": 0,
+        "encoder_dropout": 0.0,
+        "encoder_hidden_dim": 256,
+        "encoder_num_layers": 3,
+        "encoder_speaker_role": true,
+        "ext_ist_att_activation": "sigmoid",
+        "ext_ist_att_in": false,
+        "ext_ist_decoder_in": false,
+        "ext_ist_enabled": false,
+        "ext_ist_encoded_concat": false,
+        "ext_ist_encoder_dim": 256,
+        "ext_ist_objective_speaker_id": false,
+        "ext_ist_objective_speaker_id_num": 11972,
+        "ext_ist_sides": "single",
+        "ext_ist_style": "one_shot",
+        "ext_ist_tanh_post": false,
+        "ext_ist_tanh_pre": false,
+        "ext_ist_token_count": 10,
+        "ext_ist_token_dim": 256,
+        "ext_ist_use_feature_deltas": false,
+        "ext_ist_use_feature_values": false,
+        "feature_names": [
+            "pitch_mean_norm_by_conv_speaker",
+            "pitch_range_norm_by_conv_speaker",
+            "intensity_mean_vcd_norm_by_conv_speaker",
+            "jitter_norm_by_conv_speaker",
+            "shimmer_norm_by_conv_speaker",
+            "nhr_vcd_norm_by_conv_speaker",
+            "rate_norm_by_conv_speaker"
+        ],
+        "lr": 0.0001,
+        "num_decoders": 1,
+        "predict_format": "value",
+        "role_type": "AgentPartner",
+        "speaker_role_encoding": "one_hot",
+        "train_both_sides": false,
+        "use_embeddings": false,
+        "use_embeddings_att": false,
+        "use_embeddings_decoder": false,
+        "use_embeddings_encoder": false,
+        "use_embeddings_rnn": false
+    },
+    "trainer": {
+        "callbacks": [
+            {
+                "class_path": "lightning.pytorch.callbacks.EarlyStopping",
+                "init_args": {
+                    "mode": "min",
+                    "monitor": "validation_loss",
+                    "patience": 25
+                }
+            },
+            {
+                "class_path": "lightning.pytorch.callbacks.ModelCheckpoint",
+                "init_args": {
+                    "filename": "checkpoint-{epoch}-{validation_loss:.5f}",
+                    "mode": "min",
+                    "monitor": "validation_loss",
+                    "save_top_k": 1
+                }
+            },
+            {
+                "class_path": "lightning.pytorch.callbacks.ModelCheckpoint",
+                "init_args": {
+                    "save_last": true
+                }
+            }
+        ],
+        "logger": {
+            "class_path": "lightning.pytorch.loggers.TensorBoardLogger",
+            "init_args": {
+                "default_hp_metric": false,
+                "name": "01_fisher_no_embeddings_256_3_autoregressive",
+                "save_dir": "lightning_logs"
+            }
+        },
+        "precision": "16-mixed"
+    }
+}
