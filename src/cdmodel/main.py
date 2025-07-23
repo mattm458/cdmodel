@@ -8,7 +8,7 @@ from cdmodel.model import CDModel
 
 def cli_main():
     torch.set_float32_matmul_precision("high")
-    cli = LightningCLI(CDModel, ConversationDataModule)
+    LightningCLI(CDModel, ConversationDataModule)
 
 
 if __name__ == "__main__":
