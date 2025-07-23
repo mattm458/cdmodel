@@ -92,6 +92,7 @@ CDModelPredictFormat = Enum("CDModelPredictFormat", ["value", "delta"])
 class CDModel(pl.LightningModule):
     def __init__(
         self,
+        *,
         feature_names: list[str],
         embedding_dim: int,
         embedding_encoder_out_dim: int,
@@ -104,11 +105,11 @@ class CDModel(pl.LightningModule):
         embeddings_encoder_in: bool,
         embeddings_att_in: bool,
         embeddings_decoder_in: bool,
+        embeddings_decoder_linear_in: bool,
         embeddings_type: str | None,
         encoder_hidden_dim: int,
         encoder_num_layers: int,
         encoder_dropout: float,
-        decoder_att_dim: int,
         decoder_hidden_dim: int,
         decoder_num_layers: int,
         decoder_dropout: float,
@@ -215,6 +216,7 @@ class CDModel(pl.LightningModule):
         self.embeddings_encoder_in: Final[bool] = embeddings_encoder_in
         self.embeddings_att_in: Final[bool] = embeddings_att_in
         self.embeddings_decoder_in: Final[bool] = embeddings_decoder_in
+        self.embeddings_decoder_linear_in: Final[bool] = embeddings_decoder_linear_in
         self.embeddings_type: Final[str | None] = embeddings_type
 
         self.embedding_encoder: EmbeddingEncoder | None = None
@@ -434,6 +436,11 @@ class CDModel(pl.LightningModule):
                     output_dim=decoder_out_dim,
                     activation=None,
                     output_layers=decoder_output_layers,
+                    output_layer_cat_dim=(
+                        embedding_encoder_out_dim
+                        if self.embeddings_decoder_linear_in
+                        else 0
+                    ),
                 )
                 for _ in range(num_decoders)
             ]
@@ -844,7 +851,14 @@ class CDModel(pl.LightningModule):
                     decoder_in_arr.append(ist_embeddings)
                 decoder_in = torch.cat(decoder_in_arr, dim=-1)
 
-                decoder_out, h_out, decoder_high = decoder(decoder_in, h)
+                if self.embeddings_decoder_linear_in:
+                    decoder_out, h_out = decoder(
+                        encoded=decoder_in,
+                        hidden=h,
+                        output_layer_cat=embeddings_encoded_segmented[i + 1],
+                    )
+                else:
+                    decoder_out, h_out = decoder(encoded=decoder_in, hidden=h)
                 decoder_hidden[decoder_idx] = h_out
 
                 decoded_all_tensor[

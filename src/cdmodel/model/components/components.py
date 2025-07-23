@@ -423,6 +423,7 @@ class Decoder(nn.Module):
         num_layers: int,
         activation: Literal["tanh", None],
         output_layers: int,
+        output_layer_cat_dim: int,
     ):
         super().__init__()
 
@@ -438,8 +439,12 @@ class Decoder(nn.Module):
         self.dropout = nn.Dropout(decoder_dropout)
 
         linear_arr: list[nn.Module] = [
-            nn.Linear(hidden_dim, hidden_dim if output_layers > 1 else output_dim)
+            nn.Linear(
+                hidden_dim + output_layer_cat_dim,
+                hidden_dim if output_layers > 1 else output_dim,
+            )
         ]
+
         for i in range(output_layers - 1):
             if i == output_layers - 2:
                 linear_arr.extend([nn.ELU(), nn.Linear(hidden_dim, output_dim)])
@@ -459,9 +464,7 @@ class Decoder(nn.Module):
         ]
 
     def forward(
-        self,
-        encoded: Tensor,
-        hidden: list[Tensor],
+        self, encoded: Tensor, hidden: list[Tensor], output_layer_cat=None
     ) -> tuple[Tensor, list[Tensor], Tensor]:
         if len(hidden) != self.num_layers:
             raise Exception(
@@ -481,6 +484,9 @@ class Decoder(nn.Module):
 
             new_hidden.append(h_out)
 
+        if output_layer_cat is not None:
+            x = torch.concat([x, output_layer_cat], dim=-1)
+
         out = self.linear(x)
 
-        return out, new_hidden, x
+        return out, new_hidden
