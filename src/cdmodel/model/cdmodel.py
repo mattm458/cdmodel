@@ -219,14 +219,26 @@ class CDModel(pl.LightningModule):
         self.embeddings: Final[bool] = embeddings
         self.embeddings_use_rnn: Final[bool] = embeddings_use_rnn
         self.embeddings_use_linear: Final[bool] = embeddings_use_linear
+
         self.embeddings_use_separate_linears: Final[bool] = (
             embeddings_use_separate_linears
         )
-        self.embeddings_encoder_in: Final[bool] = embeddings_encoder_in
-        self.embeddings_att_in: Final[bool] = embeddings_att_in
-        self.embeddings_decoder_in: Final[bool] = embeddings_decoder_in
-        self.embeddings_decoder_linear_in: Final[bool] = embeddings_decoder_linear_in
         self.embeddings_type: Final[str | None] = embeddings_type
+
+        self.embedding_locations: list[str] = []
+        self.embeddings_encoder_in: Final[bool] = embeddings_encoder_in
+        if embeddings_encoder_in:
+            self.embedding_locations.append("encoder")
+        self.embeddings_att_in: Final[bool] = embeddings_att_in
+        if embeddings_att_in:
+            self.embedding_locations.append("att")
+        self.embeddings_decoder_in: Final[bool] = embeddings_decoder_in
+        if embeddings_decoder_in:
+            self.embedding_locations.append("decoder")
+        self.embeddings_decoder_linear_in: Final[bool] = embeddings_decoder_linear_in
+        if embeddings_decoder_linear_in:
+            self.embedding_locations.append("decoder_linear")
+        print(f"cdmodel: Using embedding locations: {self.embedding_locations}")
 
         self.embedding_encoder: EmbeddingEncoder | None = None
         self.embedding_linear = None
@@ -247,24 +259,10 @@ class CDModel(pl.LightningModule):
         if self.embeddings and self.embeddings_use_linear:
             if self.embeddings_use_separate_linears:
                 self.embedding_linears = nn.ModuleDict()
-
-                if self.embeddings_encoder_in:
-                    self.embedding_linears["encoder"] = nn.Sequential(
+                for embedding_location in self.embedding_locations:
+                    self.embedding_linears[embedding_location] = nn.Sequential(
                         nn.Linear(embedding_dim, embedding_encoder_out_dim), nn.Tanh()
                     )
-                if self.embeddings_att_in:
-                    self.embedding_linears["att"] = nn.Sequential(
-                        nn.Linear(embedding_dim, embedding_encoder_out_dim), nn.Tanh()
-                    )
-                if self.embeddings_decoder_in:
-                    self.embedding_linears["decoder"] = nn.Sequential(
-                        nn.Linear(embedding_dim, embedding_encoder_out_dim), nn.Tanh()
-                    )
-                if self.embeddings_decoder_linear_in:
-                    self.embedding_linears["decoder_linear"] = nn.Sequential(
-                        nn.Linear(embedding_dim, embedding_encoder_out_dim), nn.Tanh()
-                    )
-
             else:
                 self.embedding_linear = nn.Sequential(
                     nn.Linear(embedding_dim, embedding_encoder_out_dim), nn.Tanh()
@@ -581,31 +579,33 @@ class CDModel(pl.LightningModule):
         num_segments: Final[int] = segment_features.shape[1]
         device = segment_features.device
 
-        embeddings_encoded: Tensor | None = None
+        embeddings = {}
         if self.embeddings:
             if self.embeddings_type == "word":
-                if self.embedding_encoder is None:
-                    raise Exception("Embedding encoder cannot be None")
+                raise Exception("Temporarily not implemented")
+                # if self.embedding_encoder is None:
+                #     raise Exception("Embedding encoder cannot be None")
 
-                embeddings_encoded, _ = self.embedding_encoder(
-                    word_embeddings, embeddings_len
-                )
-                embeddings_encoded = nn.utils.rnn.pad_sequence(
-                    torch.split(embeddings_encoded, conv_len), batch_first=True  # type: ignore
-                )
+                # embeddings_encoded, _ = self.embedding_encoder(
+                #     word_embeddings, embeddings_len
+                # )
+                # embeddings_encoded = nn.utils.rnn.pad_sequence(
+                #     torch.split(embeddings_encoded, conv_len), batch_first=True  # type: ignore
+                # )
 
-                if self.embedding_rnn is not None:
-                    embeddings_rnn_out, _ = self.embedding_rnn(
-                        nn.utils.rnn.pack_padded_sequence(
-                            embeddings_encoded,
-                            conv_len,
-                            batch_first=True,
-                            enforce_sorted=False,
-                        )
-                    )
-                    embeddings_encoded, _ = nn.utils.rnn.pad_packed_sequence(
-                        embeddings_rnn_out, batch_first=True
-                    )
+                # # TODO: This should be mandatory for word embeddings, is it?
+                # if self.embedding_rnn is not None:
+                #     embeddings_rnn_out, _ = self.embedding_rnn(
+                #         nn.utils.rnn.pack_padded_sequence(
+                #             embeddings_encoded,
+                #             conv_len,
+                #             batch_first=True,
+                #             enforce_sorted=False,
+                #         )
+                #     )
+                #     embeddings_encoded, _ = nn.utils.rnn.pad_packed_sequence(
+                #         embeddings_rnn_out, batch_first=True
+                #     )
             elif self.embeddings_type == "segment":
                 if segment_embeddings is None:
                     raise Exception("segment_embeddings cannot be None")
@@ -625,8 +625,26 @@ class CDModel(pl.LightningModule):
                 else:
                     embeddings_encoded = segment_embeddings
 
-            if self.embedding_linear is not None:
-                embeddings_encoded = self.embedding_linear(embeddings_encoded)
+            if not self.embeddings_use_linear:
+                embeddings_encoded_segmented = timestep_split(embeddings_encoded)
+                for embedding_location in self.embedding_locations:
+                    embeddings[embedding_location] = embeddings_encoded_segmented
+            else:
+                if (
+                    not self.embeddings_use_separate_linears
+                    and self.embedding_linear is not None
+                ):
+                    embeddings_encoded = self.embedding_linear(embeddings_encoded)
+                    embeddings_encoded_segmented = timestep_split(embeddings_encoded)
+                    for embedding_location in self.embedding_locations:
+                        embeddings[embedding_location] = embeddings_encoded_segmented
+                elif self.embeddings_use_separate_linears and self.embedding_linears:
+                    for embedding_location in self.embedding_locations:
+                        embeddings[embedding_location] = timestep_split(
+                            self.embedding_linears[embedding_location](
+                                embeddings_encoded
+                            )
+                        )
 
         if self.speaker_role_encoding == SpeakerRoleEncoding.one_hot:
             speaker_role_encoded = one_hot_drop_0(speaker_role_idx, num_classes=3)
@@ -639,10 +657,6 @@ class CDModel(pl.LightningModule):
         speaker_role_encoded_segmented = timestep_split(speaker_role_encoded)
         features_arr = timestep_split(segment_features)
         segment_features_delta_segmented = timestep_split(segment_features_delta)
-
-        embeddings_encoded_segmented: list[Tensor] | None = None
-        if embeddings_encoded is not None:
-            embeddings_encoded_segmented = timestep_split(embeddings_encoded)
 
         features_input_arr: list[Tensor] = []
 
@@ -768,12 +782,8 @@ class CDModel(pl.LightningModule):
             # and the previously-encoded embeddings.
             encoder_in_arr = [features_i]
 
-            if (
-                embeddings_encoded_segmented is not None
-                and self.embeddings
-                and self.embeddings_encoder_in
-            ):
-                encoder_in_arr.append(embeddings_encoded_segmented[i])
+            if "encoder" in embeddings:
+                encoder_in_arr.append(embeddings["encoder"][i])
 
             if self.encoder_speaker_role:
                 encoder_in_arr.append(speaker_role_encoded_segmented[i])
@@ -836,12 +846,8 @@ class CDModel(pl.LightningModule):
                 else:
                     attention_context.append(h[-1])
 
-                if (
-                    embeddings_encoded_segmented is not None
-                    and self.embeddings
-                    and self.embeddings_att_in
-                ):
-                    attention_context.append(embeddings_encoded_segmented[i + 1])
+                if "att" in embeddings:
+                    attention_context.append(embeddings["att"][i + 1])
                 if self.att_context_speaker_role:
                     attention_context.append(speaker_role_encoded_segmented[i + 1])
 
@@ -866,12 +872,8 @@ class CDModel(pl.LightningModule):
                     history_encoded,
                 ]
 
-                if (
-                    embeddings_encoded_segmented is not None
-                    and self.embeddings
-                    and self.embeddings_decoder_in
-                ):
-                    decoder_in_arr.append(embeddings_encoded_segmented[i + 1])
+                if "decoder" in embeddings:
+                    decoder_in_arr.append(embeddings["decoder"][i + 1])
 
                 if self.decoder_speaker_role:
                     decoder_in_arr.append(
@@ -881,11 +883,11 @@ class CDModel(pl.LightningModule):
                     decoder_in_arr.append(ist_embeddings)
                 decoder_in = torch.cat(decoder_in_arr, dim=-1)
 
-                if self.embeddings_decoder_linear_in:
+                if "decoder_linear" in embeddings:
                     decoder_out, h_out = decoder(
                         encoded=decoder_in,
                         hidden=h,
-                        output_layer_cat=embeddings_encoded_segmented[i + 1],
+                        output_layer_cat=embeddings["decoder_linear"][i + 1],
                     )
                 else:
                     decoder_out, h_out = decoder(encoded=decoder_in, hidden=h)
