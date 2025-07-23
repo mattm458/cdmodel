@@ -2,6 +2,8 @@
 src/cdmodel/preprocessing/
 paper_notebooks/
 old_experiments/
+lightning_logs_old/
+
 
 .vscode
 

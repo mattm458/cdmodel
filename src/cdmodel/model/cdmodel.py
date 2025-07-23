@@ -15,11 +15,14 @@ from cdmodel.model.components.components import (
     AttentionActivation,
     Decoder,
     DualAttention,
+    DualMultiheadAttention,
     EmbeddingEncoder,
     Encoder,
     NoopAttention,
     SingleAttention,
+    SingleMultiheadAttention,
     SinglePartnerAttention,
+    SinglePartnerMultiheadAttention,
 )
 from cdmodel.model.components.ext_ist import ISTIncrementalEncoder, ISTOneShotEncoder
 from cdmodel.model.util.ext_ist import (
@@ -64,8 +67,6 @@ class CDModelOutput(NamedTuple):
     a_scores: Tensor | None
     b_scores: Tensor | None
     combined_scores: Tensor | None
-    a_mask: Tensor
-    b_mask: Tensor
     ist_weights_one_shot: dict[Role, Tensor] | None
     ist_embeddings: Tensor | None
 
@@ -73,7 +74,17 @@ class CDModelOutput(NamedTuple):
 # TODO: Should these be moved to a common source file?
 CDPredictionStrategy = Enum("CDPredictionStrategy", ["both", "agent"])
 SpeakerRoleEncoding = Enum("SpeakerRoleEncoding", ["one_hot"])
-CDAttentionStyle = Enum("CDAttentionStyle", ["dual", "single_both", "single_partner"])
+CDAttentionStyle = Enum(
+    "CDAttentionStyle",
+    [
+        "dual",
+        "dual_multihead",
+        "single_both",
+        "single_both_multihead",
+        "single_partner",
+        "single_partner_multihead",
+    ],
+)
 ISTAttentionStyle = Enum("ISTAttentionStyle", ["multi_head", "additive"])
 CDModelPredictFormat = Enum("CDModelPredictFormat", ["value", "delta"])
 
@@ -87,11 +98,13 @@ class CDModel(pl.LightningModule):
         embedding_encoder_num_layers: int,
         embedding_encoder_dropout: float,
         embedding_encoder_att_dim: int,
-        use_embeddings: bool,
-        use_embeddings_rnn: bool,
-        use_embeddings_encoder: bool,
-        use_embeddings_att: bool,
-        use_embeddings_decoder: bool,
+        embeddings: bool,
+        embeddings_use_rnn: bool,
+        embeddings_use_linear: bool,
+        embeddings_encoder_in: bool,
+        embeddings_att_in: bool,
+        embeddings_decoder_in: bool,
+        embeddings_type: str | None,
         encoder_hidden_dim: int,
         encoder_num_layers: int,
         encoder_dropout: float,
@@ -110,7 +123,6 @@ class CDModel(pl.LightningModule):
         speaker_role_encoding: str,
         role_type: str,
         train_both_sides: bool,
-        lr: float,
         predict_format: str,
         autoregressive_training: bool,
         autoregressive_inference: bool,
@@ -137,15 +149,12 @@ class CDModel(pl.LightningModule):
         ext_ist_offset: Optional[
             Tensor
         ] = None,  # Optional offsets to apply to IST weights for testing
-        embedding_type: str | None = None,
     ):
         super().__init__()
         self.save_hyperparameters()
 
-        if use_embeddings and embedding_type not in {"segment", "word"}:
+        if embeddings and embeddings_type not in {"segment", "word"}:
             raise Exception("embedding_type must be one of either 'segment' or 'word")
-
-        self.lr: Final[float] = lr
 
         self.train_both_sides: Final[bool] = train_both_sides
 
@@ -200,30 +209,34 @@ class CDModel(pl.LightningModule):
 
         # Embeddings
         # =====================
-        self.use_embeddings: Final[bool] = use_embeddings
-        self.use_embeddings_rnn: Final[bool] = use_embeddings_rnn
-        self.use_embeddings_encoder: Final[bool] = use_embeddings_encoder
-        self.use_embeddings_att: Final[bool] = use_embeddings_att
-        self.use_embeddings_decoder: Final[bool] = use_embeddings_decoder
-        self.embedding_type: Final[str | None] = embedding_type
+        self.embeddings: Final[bool] = embeddings
+        self.embeddings_use_rnn: Final[bool] = embeddings_use_rnn
+        self.embeddings_use_linear: Final[bool] = embeddings_use_linear
+        self.embeddings_encoder_in: Final[bool] = embeddings_encoder_in
+        self.embeddings_att_in: Final[bool] = embeddings_att_in
+        self.embeddings_decoder_in: Final[bool] = embeddings_decoder_in
+        self.embeddings_type: Final[str | None] = embeddings_type
 
         self.embedding_encoder: EmbeddingEncoder | None = None
         self.embedding_linear = None
+        self.embedding_rnn = None
 
-        if self.use_embeddings and self.embedding_type == "word":
+        if self.embeddings and self.embeddings_type == "word":
             self.embedding_encoder = EmbeddingEncoder(
                 embedding_dim=embedding_dim,
-                encoder_out_dim=embedding_encoder_out_dim,
+                encoder_out_dim=embedding_dim,
                 encoder_num_layers=embedding_encoder_num_layers,
                 encoder_dropout=embedding_encoder_dropout,
                 attention_dim=embedding_encoder_att_dim,
             )
-        elif self.use_embeddings and self.embedding_type == "segment":
-            # TODO: Make this configurable
-            self.embedding_linear = nn.Sequential(nn.Linear(768, 768), nn.Tanh())
 
-        if self.use_embeddings and self.use_embeddings_rnn:
-            self.embedding_rnn = nn.GRU(768, 768, batch_first=True)
+        if self.embeddings and self.embeddings_use_rnn:
+            self.embedding_rnn = nn.GRU(embedding_dim, embedding_dim, batch_first=True)
+
+        if self.embeddings and self.embeddings_use_linear:
+            self.embedding_linear = nn.Sequential(
+                nn.Linear(embedding_dim, embedding_encoder_out_dim), nn.Tanh()
+            )
 
         # Segment encoder
         # =====================
@@ -237,20 +250,21 @@ class CDModel(pl.LightningModule):
             + (2 if self.encoder_speaker_role else 0)  # One-hot speaker role vector
         )
 
-        if self.use_embeddings and self.use_embeddings_encoder:
+        if self.embeddings and self.embeddings_encoder_in:
             encoder_in_dim += (
                 embedding_encoder_out_dim  # Dimensions of the embedding encoder output
             )
 
         # Main encoder for input features
         print(f"Encoder: encoder_hidden_dim = {encoder_hidden_dim}")
-        self.encoder_hidden_dim: Final[int] = encoder_hidden_dim
         self.encoder = Encoder(
             in_dim=encoder_in_dim,
             hidden_dim=encoder_hidden_dim,
             num_layers=encoder_num_layers,
             dropout=encoder_dropout,
         )
+
+        self.encoder_hidden_dim: Final[int] = encoder_hidden_dim
 
         # The dimensions of each historical timestep as output by the segment encoder.
         history_dim: Final[int] = encoder_hidden_dim + (
@@ -272,7 +286,6 @@ class CDModel(pl.LightningModule):
         # timestep. Calculate the total output size depending on whether
         # we're using dual or single attention
         att_multiplier: Final[int] = 2 if self.attention_style == "dual" else 1
-        att_history_out_dim: Final[int] = history_dim * att_multiplier
 
         ext_ist_att_context_dim: int = (
             ext_ist_token_dim
@@ -292,53 +305,89 @@ class CDModel(pl.LightningModule):
             2 if self.att_context_speaker_role else 0
         )  # One-hot speaker role vector
 
-        if self.use_embeddings and self.use_embeddings_att:
-            att_context_dim += embedding_encoder_att_dim  # The encoded representation of the upcoming segment transcript
+        if self.embeddings and self.embeddings_att_in:
+            att_context_dim += embedding_encoder_out_dim  # The encoded representation of the upcoming segment transcript
 
         # Initialize the attention mechanisms
         if self.attention_style == CDAttentionStyle.dual:
+            att_out_dim = history_dim * 2
             self.attentions = nn.ModuleList(
                 [
                     DualAttention(
                         history_in_dim=history_dim,
                         context_dim=att_context_dim,
-                        att_dim=decoder_att_dim,
+                        att_dim=att_context_dim,
                         weighting_strategy=att_weighting_strategy,
+                    )
+                    for _ in range(num_decoders)
+                ]
+            )
+        elif self.attention_style == CDAttentionStyle.dual_multihead:
+            att_out_dim = att_context_dim * 2
+            self.attentions = nn.ModuleList(
+                [
+                    DualMultiheadAttention(
+                        history_dim=history_dim, context_dim=att_context_dim
                     )
                     for _ in range(num_decoders)
                 ]
             )
         elif self.attention_style == CDAttentionStyle.single_both:
+            att_out_dim = history_dim
             self.attentions = nn.ModuleList(
                 [
                     SingleAttention(
                         history_in_dim=history_dim,
                         context_dim=att_context_dim,
-                        att_dim=decoder_att_dim,
+                        att_dim=att_context_dim,
                         weighting_strategy=att_weighting_strategy,
                     )
                     for _ in range(num_decoders)
                 ]
             )
+        elif self.attention_style == CDAttentionStyle.single_both_multihead:
+            att_out_dim = att_context_dim
+            self.attentions = nn.ModuleList(
+                [
+                    SingleMultiheadAttention(
+                        history_dim=history_dim, context_dim=att_context_dim
+                    )
+                    for _ in range(num_decoders)
+                ]
+            )
         elif self.attention_style == CDAttentionStyle.single_partner:
+            att_out_dim = history_dim
             self.attentions = nn.ModuleList(
                 [
                     SinglePartnerAttention(
                         history_in_dim=history_dim,
                         context_dim=att_context_dim,
-                        att_dim=decoder_att_dim,
+                        att_dim=att_context_dim,
                         weighting_strategy=att_weighting_strategy,
+                    )
+                    for _ in range(num_decoders)
+                ]
+            )
+        elif self.attention_style == CDAttentionStyle.single_partner_multihead:
+            att_out_dim = att_context_dim
+            self.attentions = nn.ModuleList(
+                [
+                    SinglePartnerMultiheadAttention(
+                        history_in_dim=history_dim, context_dim=att_context_dim
                     )
                     for _ in range(num_decoders)
                 ]
             )
         # TODO: Make None attention explicitly a CDAttentionStyle enum value
         elif self.attention_style is None:
+            att_out_dim = history_dim
             self.attentions = nn.ModuleList(
                 [NoopAttention() for _ in range(num_decoders)]
             )
         else:
             raise Exception(f"Unrecognized attention style '{self.attention_style}'")
+
+        decoder_in_dim: int = att_out_dim * att_multiplier
 
         # Decoders
         # =====================
@@ -354,12 +403,12 @@ class CDModel(pl.LightningModule):
             ext_ist_decoder_in_dim *= 2
 
         decoder_in_dim = (
-            att_history_out_dim  # Size of the attention mechanism output for summarized historical segments
+            decoder_in_dim  # Size of the attention mechanism output for summarized historical segments
             + (2 if self.decoder_speaker_role else 0)  # One-hot speaker role vector
             + ext_ist_decoder_in_dim  # IST token dimensions if active
         )
 
-        if self.use_embeddings and use_embeddings_decoder:
+        if self.embeddings and embeddings_decoder_in:
             decoder_in_dim += embedding_encoder_out_dim  # Size of the embedding encoder output for upcoming segment text
 
         # Initialize the decoders
@@ -496,29 +545,51 @@ class CDModel(pl.LightningModule):
         device = segment_features.device
 
         embeddings_encoded: Tensor | None = None
-        if self.use_embeddings:
-            if self.embedding_type == "word" and self.embedding_encoder is not None:
+        if self.embeddings:
+            if self.embeddings_type == "word":
+                if self.embedding_encoder is None:
+                    raise Exception("Embedding encoder cannot be None")
+
                 embeddings_encoded, _ = self.embedding_encoder(
                     word_embeddings, embeddings_len
                 )
                 embeddings_encoded = nn.utils.rnn.pad_sequence(
                     torch.split(embeddings_encoded, conv_len), batch_first=True  # type: ignore
                 )
-            elif self.embedding_type == "segment" and self.embedding_linear is not None:
-                embeddings_encoded = self.embedding_linear(segment_embeddings)
 
-            if self.use_embeddings_rnn and embeddings_encoded is not None:
-                embeddings_rnn_out, _ = self.embedding_rnn(
-                    nn.utils.rnn.pack_padded_sequence(
-                        embeddings_encoded,
-                        conv_len,
-                        batch_first=True,
-                        enforce_sorted=False,
+                if self.embedding_rnn is not None:
+                    embeddings_rnn_out, _ = self.embedding_rnn(
+                        nn.utils.rnn.pack_padded_sequence(
+                            embeddings_encoded,
+                            conv_len,
+                            batch_first=True,
+                            enforce_sorted=False,
+                        )
                     )
-                )
-                embeddings_encoded, _ = nn.utils.rnn.pad_packed_sequence(
-                    embeddings_rnn_out, batch_first=True
-                )
+                    embeddings_encoded, _ = nn.utils.rnn.pad_packed_sequence(
+                        embeddings_rnn_out, batch_first=True
+                    )
+            elif self.embeddings_type == "segment":
+                if segment_embeddings is None:
+                    raise Exception("segment_embeddings cannot be None")
+
+                if self.embedding_rnn is not None:
+                    embeddings_rnn_out, _ = self.embedding_rnn(
+                        nn.utils.rnn.pack_padded_sequence(
+                            segment_embeddings,
+                            conv_len,
+                            batch_first=True,
+                            enforce_sorted=False,
+                        )
+                    )
+                    embeddings_encoded, _ = nn.utils.rnn.pad_packed_sequence(
+                        embeddings_rnn_out, batch_first=True
+                    )
+                else:
+                    embeddings_encoded = segment_embeddings
+
+            if self.embedding_linear is not None:
+                embeddings_encoded = self.embedding_linear(embeddings_encoded)
 
         if self.speaker_role_encoding == SpeakerRoleEncoding.one_hot:
             speaker_role_encoded = one_hot_drop_0(speaker_role_idx, num_classes=3)
@@ -557,8 +628,6 @@ class CDModel(pl.LightningModule):
         a_scores_all: list[Tensor] = []
         b_scores_all: list[Tensor] = []
         combined_scores_all: list[Tensor] = []
-        a_mask_all: list[Tensor] = []
-        b_mask_all: list[Tensor] = []
 
         # Placeholders to contain predicted features carried over from the previous timestep
         features_prev = torch.zeros((batch_size, self.num_features), device=device)
@@ -664,8 +733,8 @@ class CDModel(pl.LightningModule):
 
             if (
                 embeddings_encoded_segmented is not None
-                and self.use_embeddings
-                and self.use_embeddings_encoder
+                and self.embeddings
+                and self.embeddings_encoder_in
             ):
                 encoder_in_arr.append(embeddings_encoded_segmented[i])
 
@@ -693,8 +762,6 @@ class CDModel(pl.LightningModule):
 
             a_scores_cat: list[Tensor] = []
             b_scores_cat: list[Tensor] = []
-            a_mask_cat: list[Tensor] = []
-            b_mask_cat: list[Tensor] = []
             combined_scores_cat: list[Tensor] = []
 
             self.attention_sides = "role"
@@ -734,8 +801,8 @@ class CDModel(pl.LightningModule):
 
                 if (
                     embeddings_encoded_segmented is not None
-                    and self.use_embeddings
-                    and self.use_embeddings_att
+                    and self.embeddings
+                    and self.embeddings_att_in
                 ):
                     attention_context.append(embeddings_encoded_segmented[i + 1])
                 if self.att_context_speaker_role:
@@ -764,8 +831,8 @@ class CDModel(pl.LightningModule):
 
                 if (
                     embeddings_encoded_segmented is not None
-                    and self.use_embeddings
-                    and self.use_embeddings_decoder
+                    and self.embeddings
+                    and self.embeddings_decoder_in
                 ):
                     decoder_in_arr.append(embeddings_encoded_segmented[i + 1])
 
@@ -784,9 +851,6 @@ class CDModel(pl.LightningModule):
                     :, i, decoder_idx : self.features_per_decoder + 1
                 ] = decoder_out
 
-            a_mask_cat.append(a_mask)
-            b_mask_cat.append(b_mask)
-
             # Assemble final predicted features
             features_prev = decoded_all_tensor[:, i, :]
 
@@ -796,9 +860,6 @@ class CDModel(pl.LightningModule):
                 b_scores_all.append(torch.cat(b_scores_cat, dim=1))
             if len(combined_scores_cat) > 0:
                 combined_scores_all.append(torch.cat(combined_scores_cat, dim=1))
-
-            a_mask_all.append(torch.cat(a_mask_cat, dim=1))
-            b_mask_all.append(torch.cat(b_mask_cat, dim=1))
 
         return CDModelOutput(
             predicted_segment_features=decoded_all_tensor,
@@ -818,12 +879,7 @@ class CDModel(pl.LightningModule):
                 if len(combined_scores_all) > 0
                 else None
             ),
-            a_mask=expand_cat(a_mask_all, dim=-1),
-            b_mask=expand_cat(b_mask_all, dim=-1),
         )
-
-    def configure_optimizers(self) -> torch.optim.Optimizer:
-        return torch.optim.AdamW(self.parameters(), lr=self.lr)
 
     def training_step(self, batch: ConversationData, batch_idx: int) -> Tensor:
         batch_size = batch.segment_features.shape[0]

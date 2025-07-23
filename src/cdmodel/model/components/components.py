@@ -95,7 +95,7 @@ class Attention(AttentionModule):
         context: Tensor,
         mask: Optional[Tensor] = None,
         weight_offset: Optional[Tensor] = None,
-    ) -> tuple[Tensor, Tensor]:
+    ) -> tuple[Tensor, Tensor | None]:
         score: Tensor
 
         if self.weighting_strategy == "uniform":
@@ -136,7 +136,38 @@ class Attention(AttentionModule):
 
         att_applied = torch.bmm(score, history).squeeze(1)
 
+        if self.training:
+            return att_applied, None
+
         return att_applied, score
+
+
+class MultiheadAttention(AttentionModule):
+    def __init__(self, history_dim: int, query_dim: int):
+        super().__init__()
+
+        self.att = nn.MultiheadAttention(
+            embed_dim=query_dim,
+            num_heads=1,
+            batch_first=True,
+            kdim=history_dim,
+            vdim=history_dim,
+        )
+
+    def forward(
+        self, history: Tensor, query: Tensor, mask: Optional[Tensor] = None
+    ) -> tuple[Tensor, Tensor | None]:
+        encoded, weights = self.att(
+            query=query.unsqueeze(1),
+            key=history,
+            value=history,
+            key_padding_mask=mask,
+            need_weights=not self.training,
+        )
+
+        return encoded.nan_to_num(0).squeeze(1), (
+            weights.nan_to_num(0) if weights is not None else None
+        )
 
 
 class DualAttention(AttentionModule):
@@ -183,6 +214,38 @@ class DualAttention(AttentionModule):
         )
 
 
+class DualMultiheadAttention(AttentionModule):
+    def __init__(self, history_dim: int, context_dim: int):
+        super().__init__()
+
+        self.our_attention = MultiheadAttention(
+            history_dim=history_dim, query_dim=context_dim
+        )
+        self.their_attention = MultiheadAttention(
+            history_dim=history_dim, query_dim=context_dim
+        )
+
+    def forward(
+        self, history: Tensor, context: Tensor, a_mask: Tensor, b_mask: Tensor
+    ) -> tuple[Tensor, AttentionScores]:
+        a_att, a_scores = self.our_attention(
+            history=history,
+            query=context,
+            mask=~a_mask,
+        )
+
+        b_att, b_scores = self.their_attention(
+            history=history,
+            query=context,
+            mask=~b_mask,
+        )
+
+        return torch.cat([a_att, b_att], dim=-1), AttentionScores(
+            a_scores=a_scores,
+            b_scores=b_scores,
+        )
+
+
 class SingleAttention(AttentionModule):
     def __init__(
         self,
@@ -207,6 +270,24 @@ class SingleAttention(AttentionModule):
             history,
             context=context,
             mask=~(a_mask + b_mask).unsqueeze(-1),
+        )
+
+        return att, AttentionScores(combined_scores=scores)
+
+
+class SingleMultiheadAttention(AttentionModule):
+    def __init__(self, history_dim: int, context_dim: int):
+        super().__init__()
+
+        self.attention = MultiheadAttention(
+            history_dim=history_dim, query_dim=context_dim
+        )
+
+    def forward(
+        self, history: Tensor, context: Tensor, a_mask: Tensor, b_mask: Tensor
+    ) -> tuple[Tensor, AttentionScores]:
+        att, scores = self.attention(
+            history=history, query=context, mask=~(a_mask + b_mask)
         )
 
         return att, AttentionScores(combined_scores=scores)
@@ -237,6 +318,27 @@ class SinglePartnerAttention(AttentionModule):
             context=context,
             mask=~(b_mask).unsqueeze(-1),
         )
+
+        return att, AttentionScores(b_scores=scores)
+
+
+class SinglePartnerMultiheadAttention(AttentionModule):
+    def __init__(
+        self,
+        history_in_dim: int,
+        context_dim: int,
+    ):
+        super().__init__()
+
+        self.attention = MultiheadAttention(
+            history_dim=history_in_dim,
+            query_dim=context_dim,
+        )
+
+    def forward(
+        self, history: Tensor, context: Tensor, a_mask: Tensor, b_mask: Tensor
+    ) -> tuple[Tensor, AttentionScores]:
+        att, scores = self.attention(history=history, query=context, mask=~b_mask)
 
         return att, AttentionScores(b_scores=scores)
 
