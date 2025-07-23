@@ -219,7 +219,9 @@ class CDModel(pl.LightningModule):
         self.embeddings: Final[bool] = embeddings
         self.embeddings_use_rnn: Final[bool] = embeddings_use_rnn
         self.embeddings_use_linear: Final[bool] = embeddings_use_linear
-        self.embeddings_use_separate_linears: Final[bool] = embeddings_use_separate_linears
+        self.embeddings_use_separate_linears: Final[bool] = (
+            embeddings_use_separate_linears
+        )
         self.embeddings_encoder_in: Final[bool] = embeddings_encoder_in
         self.embeddings_att_in: Final[bool] = embeddings_att_in
         self.embeddings_decoder_in: Final[bool] = embeddings_decoder_in
@@ -243,9 +245,30 @@ class CDModel(pl.LightningModule):
             self.embedding_rnn = nn.GRU(embedding_dim, embedding_dim, batch_first=True)
 
         if self.embeddings and self.embeddings_use_linear:
-            self.embedding_linear = nn.Sequential(
-                nn.Linear(embedding_dim, embedding_encoder_out_dim), nn.Tanh()
-            )
+            if self.embeddings_use_separate_linears:
+                self.embedding_linears = nn.ModuleDict()
+
+                if self.embeddings_encoder_in:
+                    self.embedding_linears["encoder"] = nn.Sequential(
+                        nn.Linear(embedding_dim, embedding_encoder_out_dim), nn.Tanh()
+                    )
+                if self.embeddings_att_in:
+                    self.embedding_linears["att"] = nn.Sequential(
+                        nn.Linear(embedding_dim, embedding_encoder_out_dim), nn.Tanh()
+                    )
+                if self.embeddings_decoder_in:
+                    self.embedding_linears["decoder"] = nn.Sequential(
+                        nn.Linear(embedding_dim, embedding_encoder_out_dim), nn.Tanh()
+                    )
+                if self.embeddings_decoder_linear_in:
+                    self.embedding_linears["decoder_linear"] = nn.Sequential(
+                        nn.Linear(embedding_dim, embedding_encoder_out_dim), nn.Tanh()
+                    )
+
+            else:
+                self.embedding_linear = nn.Sequential(
+                    nn.Linear(embedding_dim, embedding_encoder_out_dim), nn.Tanh()
+                )
 
         # Segment encoder
         # =====================
