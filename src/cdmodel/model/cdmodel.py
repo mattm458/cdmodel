@@ -102,6 +102,7 @@ class CDModel(pl.LightningModule):
         embeddings: bool,
         embeddings_use_rnn: bool,
         embeddings_use_linear: bool,
+        embeddings_use_separate_linears: bool,
         embeddings_encoder_in: bool,
         embeddings_att_in: bool,
         embeddings_decoder_in: bool,
@@ -210,9 +211,15 @@ class CDModel(pl.LightningModule):
 
         # Embeddings
         # =====================
+        if embeddings_use_separate_linears and not embeddings_use_linear:
+            raise Exception(
+                "embeddings_use_separate_linears can only be used if embeddings_use_linear is True!"
+            )
+
         self.embeddings: Final[bool] = embeddings
         self.embeddings_use_rnn: Final[bool] = embeddings_use_rnn
         self.embeddings_use_linear: Final[bool] = embeddings_use_linear
+        self.embeddings_use_separate_linears: Final[bool] = embeddings_use_separate_linears
         self.embeddings_encoder_in: Final[bool] = embeddings_encoder_in
         self.embeddings_att_in: Final[bool] = embeddings_att_in
         self.embeddings_decoder_in: Final[bool] = embeddings_decoder_in
