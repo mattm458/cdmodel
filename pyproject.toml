@@ -16,9 +16,9 @@ classifiers = [
     "Operating System :: OS Independent",
 ]
 dependencies = [
-    "jsonargparse[signatures]==4.40.1",
+    "jsonargparse[signatures]==4.40.2",
     "lightning==2.5.2",
-    "matplotlib==3.10.5",
+    "matplotlib==3.10.5",p
     "mypy-extensions==1.1.0",
     "numpy==2.3.2",
     "openpyxl==3.1.5",
@@ -36,7 +36,7 @@ dependencies = [
     "speech-utils @ git+https://github.com/mattm458/speech-utils.git",
     "statsmodels==0.14.5",
     "tensorboard==2.20.0",
-    "torch==2.7.1",
+    "torch==2.8.0",
     "transformers==4.55.0"
 ]
 
