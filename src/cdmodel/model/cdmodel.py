@@ -48,13 +48,30 @@ class CDModel(pl.LightningModule):
         # Pull some metadata from the inputs
         batch_size, num_steps, _ = features.shape
 
+        # Prepare various input data
+        # ==============================
+        # Speaker designations, one-hot encoded for model input
+        speaker_designation_one_hot = F.one_hot(speaker_designation)[:, :, 1:]
+
+        # History masks for timestep-level prediction
+        # The dimensions of the tensors below are:
+        #
+        #   batch x prediction timesteps x dialogue history timesteps
+        speaker_designation_timesteps = speaker_designation[:, None, :-1]
+        history_mask = (
+            speaker_designation_timesteps != speaker_designation[:, 1:].unsqueeze(2)
+        ) & (speaker_designation_timesteps != 0)
+
+        # Prepare encoder inputs
+        # ==============================
         encoder_in_arr: list[Tensor] = [features]
         if self.encoder_speaker_in:
-            encoder_in_arr.append(F.one_hot(speaker_designation)[:, :, 1:])
+            encoder_in_arr.append(speaker_designation_one_hot[:, 1:, :])
 
         encoder_in = torch.cat(encoder_in_arr, -1)
 
         # Get state objects for the encoder and decoder
+        # ==============================
         encoder_state = self.encoder.initialize(input=encoder_in, lengths=conv_lengths)
         decoder_state = self.decoder.initialize(
             batch_size=batch_size, device=features.device
@@ -64,19 +81,18 @@ class CDModel(pl.LightningModule):
         weights_timesteps: list[Tensor] = []
 
         # Loop through the conversation
+        # ==============================
         for i in range(num_steps - 1):
             # Encode the current inputs and retrieve the conversation history so far
             history = self.encoder(i=i, state=encoder_state, input=encoder_in[:, i, :])
 
-            # NEW: Who is the opposite partner in the dialogue history?
-            speaker_pred = speaker_designation[:, i + 1, None]
-            speaker_history = speaker_designation[:, : i + 1]
-            mask = (speaker_history != speaker_pred) & (speaker_history != 0)
+            # Get the history mask for this prediction timestep
+            mask = history_mask[:, i, : i + 1]
 
             additional_decoder_in_arr: list[Tensor] = []
             if self.decoder_speaker_in:
                 additional_decoder_in_arr.append(
-                    F.one_hot(speaker_designation)[:, i, 1:].unsqueeze(1)
+                    speaker_designation_one_hot[:, i, :].unsqueeze(1)
                 )
 
             # Decode output features
@@ -167,6 +183,3 @@ class CDModel(pl.LightningModule):
             )
 
         return loss
-
-    def configure_optimizers(self):
-        return torch.optim.AdamW(self.parameters(), lr=0.001)
