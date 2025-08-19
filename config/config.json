@@ -15,6 +15,9 @@
         "zero_pad": true
     },
     "model": {
+        "encoder_hidden_size": 32,
+        "encoder_num_layers": 2,
+        "encoder_speaker_in": true,
         "features": [
             "pitch_mean_log",
             "pitch_range_log",

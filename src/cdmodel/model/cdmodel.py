@@ -12,10 +12,26 @@ from cdmodel.util.visualization import plot_weights
 
 
 class CDModel(pl.LightningModule):
-    def __init__(self, features: list[str]):
+    def __init__(
+        self,
+        features: list[str],
+        encoder_hidden_size: int,
+        encoder_num_layers: int,
+        encoder_speaker_in: bool,
+    ):
         super().__init__()
 
-        self.encoder = Encoder(input_size=7, hidden_size=32, num_layers=2)
+        self.encoder_speaker_in: Final[bool] = encoder_speaker_in
+        encoder_input_size: Final[int] = len(features) + (
+            2 if encoder_speaker_in else 0
+        )
+
+        self.encoder = Encoder(
+            input_size=encoder_input_size,
+            hidden_size=encoder_hidden_size,
+            num_layers=encoder_num_layers,
+        )
+
         self.decoder = DecoderCell(
             input_size=32, hidden_size=32, num_layers=2, features=features
         )
@@ -26,7 +42,11 @@ class CDModel(pl.LightningModule):
         # Pull some metadata from the inputs
         batch_size, num_steps, _ = features.shape
 
-        encoder_in: Tensor = features
+        encoder_in_arr: list[Tensor] = [features]
+        if self.encoder_speaker_in:
+            encoder_in_arr.append(F.one_hot(speaker_designation)[:, :, 1:])
+
+        encoder_in = torch.cat(encoder_in_arr, -1)
 
         # Get state objects for the encoder and decoder
         encoder_state = self.encoder.initialize(input=encoder_in, lengths=conv_lengths)
