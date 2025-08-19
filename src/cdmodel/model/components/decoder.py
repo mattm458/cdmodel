@@ -21,7 +21,9 @@ class DecoderCell(nn.Module):
         self.hidden_size: Final[int] = hidden_size
         self.num_layers: Final[int] = num_layers
 
-        self.attention = AttentionAdditive(hidden_dim=input_size, query_dim=96)
+        self.attention = AdditiveAttention(
+            hidden_dim=input_size, query_dim=hidden_size * num_layers
+        )
         self.rnn = nn.LSTM(
             input_size, hidden_size, num_layers=num_layers, batch_first=True
         )

@@ -1,10 +1,34 @@
 {
-    "model": {},
+    "data": {
+        "batch_size": 64,
+        "features": [
+            "pitch_mean_log",
+            "pitch_range_log",
+            "intensity_mean_vcd",
+            "jitter",
+            "shimmer",
+            "nhr_vcd",
+            "rate"
+        ],
+        "normalization": "zscore_conv_speaker",
+        "primary_speaker_selection": "first",
+        "zero_pad": true
+    },
+    "model": {
+        "features": [
+            "pitch_mean_log",
+            "pitch_range_log",
+            "intensity_mean_vcd",
+            "jitter",
+            "shimmer",
+            "nhr_vcd",
+            "rate"
+        ]
+    },
     "optimizer": {
-        "class_path": "Adam",
+        "class_path": "AdamW",
         "init_args": {
             "lr": 0.001
         }
-    },
-    "data": { "dataset_dir": "./", "batch_size": 2 }
+    }
 }

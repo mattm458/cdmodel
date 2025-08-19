@@ -31,7 +31,9 @@ class ConversationDataModule(LightningDataModule):
             dataset_dir=dataset_dir,
             features=features,
             conv_ids=np.sort(
-                pd.read_csv("data.csv", engine="pyarrow")["id"].unique()
+                pd.read_csv(path.join(dataset_dir, "data.csv"), engine="pyarrow")[
+                    "id"
+                ].unique()
             ).tolist(),
             zero_pad=zero_pad,
             embeddings=embeddings,

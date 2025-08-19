@@ -14,9 +14,9 @@ class CDModel(pl.LightningModule):
     def __init__(self, features: list[str]):
         super().__init__()
 
-        self.encoder = Encoder(input_size=3, hidden_size=32, num_layers=3)
+        self.encoder = Encoder(input_size=7, hidden_size=32, num_layers=2)
         self.decoder = DecoderCell(
-            input_size=32, hidden_size=32, num_layers=3, features=features
+            input_size=32, hidden_size=32, num_layers=2, features=features
         )
 
     def forward(
