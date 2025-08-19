@@ -12,7 +12,7 @@ from cdmodel.common.data import ConversationBatch
 SpeakerSelectionStrategy = Literal["first"] | Literal["second"] | Literal["both"]
 
 
-class ConversationDatasetV2(Dataset):
+class ConversationDataset(Dataset):
     def __init__(
         self,
         dataset_dir: str,
