@@ -82,10 +82,6 @@ class CDModel(pl.LightningModule):
 
         loss = F.mse_loss(y_hat[mask], y[mask])
 
-        print(y_hat[mask][20].detach().cpu().tolist())
-        print(y[mask][20].cpu().tolist())
-        print()
-
         self.log(
             "training_loss",
             loss.detach(),
@@ -108,10 +104,6 @@ class CDModel(pl.LightningModule):
         mask = batch.speaker_designation[:, 1:] != 0
 
         loss = F.mse_loss(y_hat[mask], y[mask])
-
-        print(y_hat[mask][0].detach().cpu().tolist())
-        print(y[mask][0].cpu().tolist())
-        print()
 
         self.log(
             "validation_loss",
