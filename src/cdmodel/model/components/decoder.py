@@ -28,11 +28,11 @@ class DecoderCell(nn.Module):
             input_size, hidden_size, num_layers=num_layers, batch_first=True
         )
 
-        self.features = nn.ModuleDict()
-        for f in features:
-            self.features[f] = nn.Sequential(
-                nn.Linear(input_size, input_size), nn.ELU(), nn.Linear(input_size, 1)
-            )
+        self.linear = nn.Sequential(
+            nn.Linear(input_size, input_size),
+            nn.ELU(),
+            nn.Linear(input_size, len(features)),
+        )
 
     def initialize(self, batch_size: int, device) -> DecoderState:
         return DecoderState(
@@ -54,5 +54,5 @@ class DecoderCell(nn.Module):
         context, weights = self.attention(query=query, keys=input, mask=mask)
         x, state.h = self.rnn(context, state.h)
 
-        outputs = torch.concat([self.features[f](x) for f in self.features], -1)
+        outputs = self.linear(x)
         return outputs, weights
