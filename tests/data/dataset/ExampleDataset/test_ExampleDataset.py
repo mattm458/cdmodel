@@ -1,7 +1,7 @@
 import pytest
 import torch
 
-from project.data.dataset import ExampleDataset
+from cdmodel.data.dataset import ExampleDataset
 
 
 @pytest.fixture

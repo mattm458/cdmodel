@@ -3,14 +3,14 @@ requires = ["setuptools>=75.8"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "project"
+name = "cdmodel"
 version = "0.0.1"
 authors = [
   { name="Author Name", email="email@example.com" },
 ]
 description = "description"
 readme = "README.md"
-requires-python = ">=3.12.0"
+requires-python = ">=3.13.0"
 classifiers = [
     "Programming Language :: Python :: 3",
     "Operating System :: OS Independent",
@@ -24,7 +24,7 @@ dependencies = [
 ]
 
 [tool.setuptools.package-data]
-"project" = ["py.typed"]
+"cdmodel" = ["py.typed"]
 
 [tool.setuptools.packages.find]
 where = ["src"]
@@ -34,7 +34,7 @@ where = ["src"]
 "Bug Tracker" = "https://github.com/mattm458/ml-template/issues"
 
 [project.scripts]
-project = "project.main:cli_main"
+cdmodel = "cdmodel.main:cli_main"
 
 [tool.pytest.ini_options]
 addopts = [

@@ -1,0 +1,1 @@
+from cdmodel.model.model import ExampleModel
