@@ -9,27 +9,27 @@ from torch.utils.data import Dataset
 
 from cdmodel.common.data import ConversationBatch
 
-SpeakerSelectionStrategy = Literal["first"] | Literal["second"] | Literal["both"]
+PrimarySpeakerSelectionStrategy = Literal["first"] | Literal["second"] | Literal["both"]
 
 
 class ConversationDataset(Dataset):
     def __init__(
         self,
         dataset_dir: str,
-        feature_names: list[str],
+        features: list[str],
         conv_ids: list[int],
         zero_pad: bool,
         embeddings: str | None,
         normalization: str,
-        speaker_1: SpeakerSelectionStrategy,
+        primary_speaker_selection: PrimarySpeakerSelectionStrategy,
     ):
         self.dataset_dir: Final[str] = dataset_dir
-        self.feature_names: list[str] = feature_names
+        self.features: list[str] = features
         self.conv_ids: Final[list[int]] = conv_ids
         self.zero_pad: Final[bool] = zero_pad
         self.embeddings: Final[str | None] = embeddings
         self.normalization: Final[str] = normalization
-        self.speaker_1: Final[SpeakerSelectionStrategy] = speaker_1
+        self.speaker_1: Final[PrimarySpeakerSelectionStrategy] = primary_speaker_selection
 
     def __len__(self) -> int:
         if self.speaker_1 == "both":
@@ -55,7 +55,7 @@ class ConversationDataset(Dataset):
             conv_data: Final[dict] = orjson.loads(infile.read())
 
         # Retrieve data from the loaded conversation
-        features: Tensor = torch.tensor([conv_data[f] for f in self.feature_names]).T
+        features: Tensor = torch.tensor([conv_data[f] for f in self.features]).T
         speaker_ids: Tensor = torch.tensor(conv_data["speaker_id"])
 
         for speaker_id in speaker_ids.unique():
