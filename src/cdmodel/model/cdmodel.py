@@ -8,6 +8,7 @@ from torch.nn import functional as F
 from cdmodel.common.data import ConversationBatch
 from cdmodel.model.components.decoder import DecoderCell
 from cdmodel.model.components.encoder import Encoder, EncoderCell
+from cdmodel.util.visualization import plot_weights
 
 
 class CDModel(pl.LightningModule):
