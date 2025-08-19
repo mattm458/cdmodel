@@ -9,6 +9,8 @@ def plot_weights(
     speaker: int,
 ):
     fig, ax = plt.subplots(figsize=(10, 10))
+    fig.set_tight_layout(True),
+
     timestep_mask = speaker_designation[1:] == speaker
     history_mask = (speaker_designation != speaker) | (speaker_designation == 0)
 
