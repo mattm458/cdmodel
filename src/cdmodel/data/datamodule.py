@@ -21,11 +21,13 @@ class ConversationDataModule(LightningDataModule):
         embeddings: str | None,
         normalization: str,
         primary_speaker_selection: PrimarySpeakerSelectionStrategy,
+        num_workers: int,
     ):
         super().__init__()
 
         self.dataset_dir: Final[str] = dataset_dir
         self.batch_size: Final[int] = batch_size
+        self.num_workers: Final[int] = num_workers
 
         self.dataset = ConversationDataset(
             dataset_dir=dataset_dir,
@@ -59,6 +61,8 @@ class ConversationDataModule(LightningDataModule):
             shuffle=True,
             drop_last=True,
             collate_fn=collate_fn,
+            num_workers=self.num_workers,
+            persistent_workers=True,
         )
 
     def val_dataloader(self) -> DataLoader:
@@ -69,6 +73,8 @@ class ConversationDataModule(LightningDataModule):
             shuffle=False,
             drop_last=False,
             collate_fn=collate_fn,
+            num_workers=self.num_workers,
+            persistent_workers=True,
         )
 
     def test_dataloader(self) -> DataLoader:
@@ -79,4 +85,6 @@ class ConversationDataModule(LightningDataModule):
             shuffle=False,
             drop_last=False,
             collate_fn=collate_fn,
+            num_workers=self.num_workers,
+            persistent_workers=True,
         )
