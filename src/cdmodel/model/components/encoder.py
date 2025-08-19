@@ -12,11 +12,11 @@ class EncoderState:
 
 
 class Encoder(nn.Module):
-    def __init__(self, input_size: int, hidden_size: int, num_layers: int):
+    def __init__(self, input_dim: int, hidden_dim: int, num_layers: int):
         super().__init__()
 
         self.rnn = nn.LSTM(
-            input_size, hidden_size, num_layers=num_layers, batch_first=True
+            input_dim, hidden_dim, num_layers=num_layers, batch_first=True
         )
 
     def initialize(self, input: Tensor, lengths: Tensor):

@@ -15,25 +15,31 @@ class CDModel(pl.LightningModule):
     def __init__(
         self,
         features: list[str],
-        encoder_hidden_size: int,
+        encoder_hidden_dim: int,
         encoder_num_layers: int,
         encoder_speaker_in: bool,
+        decoder_hidden_dim: int,
+        decoder_num_layers: int,
+        decoder_speaker_in: bool,
     ):
         super().__init__()
 
         self.encoder_speaker_in: Final[bool] = encoder_speaker_in
-        encoder_input_size: Final[int] = len(features) + (
-            2 if encoder_speaker_in else 0
-        )
-
+        encoder_input_dim = len(features) + (2 if encoder_speaker_in else 0)
         self.encoder = Encoder(
-            input_size=encoder_input_size,
-            hidden_size=encoder_hidden_size,
+            input_dim=encoder_input_dim,
+            hidden_dim=encoder_hidden_dim,
             num_layers=encoder_num_layers,
         )
 
+        self.decoder_speaker_in: Final[bool] = decoder_speaker_in
+        additional_decoder_dim = 2 if decoder_speaker_in else 0
         self.decoder = DecoderCell(
-            input_size=32, hidden_size=32, num_layers=2, features=features
+            input_dim=encoder_hidden_dim,
+            additional_decoder_dim=additional_decoder_dim,
+            hidden_dim=decoder_hidden_dim,
+            num_layers=decoder_num_layers,
+            features=features,
         )
 
     def forward(
@@ -67,11 +73,22 @@ class CDModel(pl.LightningModule):
             speaker_history = speaker_designation[:, : i + 1]
             mask = (speaker_history != speaker_pred) & (speaker_history != 0)
 
+            additional_decoder_in_arr: list[Tensor] = []
+            if self.decoder_speaker_in:
+                additional_decoder_in_arr.append(
+                    F.one_hot(speaker_designation)[:, i, 1:].unsqueeze(1)
+                )
+
             # Decode output features
             decoded_timestep, weights_timestep = self.decoder(
                 state=decoder_state,
                 input=history,
                 mask=mask,
+                additional_decoder_in=(
+                    torch.cat(additional_decoder_in_arr, dim=-1)
+                    if len(additional_decoder_in_arr) > 0
+                    else None
+                ),
             )
 
             decoded_timesteps.append(decoded_timestep)

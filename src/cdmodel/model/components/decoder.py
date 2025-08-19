@@ -14,24 +14,32 @@ class DecoderState:
 
 class DecoderCell(nn.Module):
     def __init__(
-        self, input_size: int, hidden_size: int, num_layers: int, features: list[str]
+        self,
+        input_dim: int,
+        additional_decoder_dim: int,
+        hidden_dim: int,
+        num_layers: int,
+        features: list[str],
     ):
         super().__init__()
 
-        self.hidden_size: Final[int] = hidden_size
+        self.hidden_size: Final[int] = hidden_dim
         self.num_layers: Final[int] = num_layers
 
         self.attention = AdditiveAttention(
-            hidden_dim=input_size, query_dim=hidden_size * num_layers
+            hidden_dim=input_dim, query_dim=hidden_dim * num_layers
         )
         self.rnn = nn.LSTM(
-            input_size, hidden_size, num_layers=num_layers, batch_first=True
+            input_dim + additional_decoder_dim,
+            hidden_dim,
+            num_layers=num_layers,
+            batch_first=True,
         )
 
         self.linear = nn.Sequential(
-            nn.Linear(input_size, input_size),
+            nn.Linear(input_dim, input_dim),
             nn.ELU(),
-            nn.Linear(input_size, len(features)),
+            nn.Linear(input_dim, len(features)),
         )
 
     def initialize(self, batch_size: int, device) -> DecoderState:
@@ -47,11 +55,19 @@ class DecoderCell(nn.Module):
         )
 
     def forward(
-        self, state: DecoderState, input: Tensor, mask: Optional[Tensor] = None
+        self,
+        state: DecoderState,
+        input: Tensor,
+        additional_decoder_in: Optional[Tensor] = None,
+        mask: Optional[Tensor] = None,
     ):
         batch_size = input.shape[0]
         query = state.h[0].permute(1, 0, 2).reshape(batch_size, -1)
         context, weights = self.attention(query=query, keys=input, mask=mask)
+
+        if additional_decoder_in is not None:
+            context = torch.concat([context, additional_decoder_in], dim=-1)
+
         x, state.h = self.rnn(context, state.h)
 
         outputs = self.linear(x)
