@@ -8,3 +8,4 @@ class ConversationBatch(NamedTuple):
     conv_lengths: Tensor
     speaker_ids: Tensor
     speaker_designation: Tensor
+    segment_embeddings: Tensor | None

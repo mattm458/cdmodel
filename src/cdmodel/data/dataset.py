@@ -29,7 +29,9 @@ class ConversationDataset(Dataset):
         self.zero_pad: Final[bool] = zero_pad
         self.embeddings: Final[str | None] = embeddings
         self.normalization: Final[str] = normalization
-        self.speaker_1: Final[PrimarySpeakerSelectionStrategy] = primary_speaker_selection
+        self.speaker_1: Final[PrimarySpeakerSelectionStrategy] = (
+            primary_speaker_selection
+        )
 
     def __len__(self) -> int:
         if self.speaker_1 == "both":
@@ -54,6 +56,14 @@ class ConversationDataset(Dataset):
         with open(path.join(self.dataset_dir, "segments", f"{conv_id}.json")) as infile:
             conv_data: Final[dict] = orjson.loads(infile.read())
 
+        # Load embeddings, if necessary
+        segment_embeddings: Tensor | None = None
+        if self.embeddings == "roberta":
+            segment_embeddings = torch.load(
+                path.join(self.dataset_dir, "roberta", f"{conv_id}-embeddings.pt"),
+                weights_only=True,
+            )
+
         # Retrieve data from the loaded conversation
         features: Tensor = torch.tensor([conv_data[f] for f in self.features]).T
         speaker_ids: Tensor = torch.tensor(conv_data["speaker_id"])
@@ -77,9 +87,13 @@ class ConversationDataset(Dataset):
             speaker_ids = F.pad(speaker_ids, (1, 0))
             speaker_side = F.pad(speaker_side, (1, 0))
 
+            if segment_embeddings is not None:
+                segment_embeddings = F.pad(segment_embeddings, (0, 0, 1, 0))
+
         return ConversationBatch(
             features=features.unsqueeze(0),
             conv_lengths=torch.tensor([len(features)]),
             speaker_ids=speaker_ids.unsqueeze(0),
             speaker_designation=speaker_side.unsqueeze(0),
+            segment_embeddings=segment_embeddings,
         )
