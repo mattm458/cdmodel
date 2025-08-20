@@ -16,7 +16,9 @@ class DecoderCell(nn.Module):
     def __init__(
         self,
         input_dim: int,
+        additional_att_dim: int,
         additional_decoder_dim: int,
+        additional_decoder_linear_dim: int,
         hidden_dim: int,
         num_layers: int,
         num_linear_layers: int,
@@ -28,7 +30,8 @@ class DecoderCell(nn.Module):
         self.num_layers: Final[int] = num_layers
 
         self.attention = AdditiveAttention(
-            hidden_dim=input_dim, query_dim=hidden_dim * num_layers
+            hidden_dim=input_dim,
+            query_dim=(hidden_dim * num_layers) + additional_att_dim,
         )
         self.rnn = nn.LSTM(
             input_dim + additional_decoder_dim,
@@ -37,10 +40,14 @@ class DecoderCell(nn.Module):
             batch_first=True,
         )
 
+        linear_dim = input_dim + additional_decoder_linear_dim
         self.linear = nn.Sequential(
             *(
-                ([nn.Linear(input_dim, input_dim), nn.ReLU()] * (num_linear_layers - 1))
-                + [nn.Linear(input_dim, len(features))]
+                (
+                    [nn.Linear(linear_dim, linear_dim), nn.ReLU()]
+                    * (num_linear_layers - 1)
+                )
+                + [nn.Linear(linear_dim, len(features))]
             )
         )
 
@@ -60,17 +67,26 @@ class DecoderCell(nn.Module):
         self,
         state: DecoderState,
         input: Tensor,
+        additional_att_in: Optional[Tensor] = None,
         additional_decoder_in: Optional[Tensor] = None,
+        additional_decoder_linear_in: Optional[Tensor] = None,
         mask: Optional[Tensor] = None,
     ):
         batch_size = input.shape[0]
         query = state.h[0].permute(1, 0, 2).reshape(batch_size, -1)
+
+        if additional_att_in is not None:
+            query = torch.cat([query, additional_att_in.squeeze(1)], -1)
+
         context, weights = self.attention(query=query, keys=input, mask=mask)
 
         if additional_decoder_in is not None:
             context = torch.concat([context, additional_decoder_in], dim=-1)
 
         x, state.h = self.rnn(context, state.h)
+
+        if additional_decoder_linear_in is not None:
+            x = torch.cat([x, additional_decoder_linear_in], -1)
 
         outputs = self.linear(x)
         return outputs, weights
