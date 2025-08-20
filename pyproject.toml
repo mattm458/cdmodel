@@ -24,6 +24,7 @@ dependencies = [
     "pandas==2.3.1",
     "pyarrow==21.0.0",
     "pytest==8.4.1",
+    "scikit-learn==1.7.1",
     "tensorboard==2.20.0",
     "torch==2.8.0"
 ]
