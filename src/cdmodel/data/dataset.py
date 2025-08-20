@@ -29,19 +29,19 @@ class ConversationDataset(Dataset):
         self.zero_pad: Final[bool] = zero_pad
         self.embeddings: Final[str | None] = embeddings
         self.normalization: Final[str] = normalization
-        self.speaker_1: Final[PrimarySpeakerSelectionStrategy] = (
+        self.primary_speaker_selection: Final[PrimarySpeakerSelectionStrategy] = (
             primary_speaker_selection
         )
 
     def __len__(self) -> int:
-        if self.speaker_1 == "both":
+        if self.primary_speaker_selection == "both":
             return len(self.conv_ids) * 2
         else:
             return len(self.conv_ids)
 
     def __getitem__(self, i: int) -> ConversationBatch:
         # Determine whether the first or second speaker is designated the primary
-        primary_speaker_selection_method: str = self.speaker_1
+        primary_speaker_selection_method: str = self.primary_speaker_selection
         if primary_speaker_selection_method == "both":
             if i < len(self.conv_ids):
                 primary_speaker_selection_method = "first"
