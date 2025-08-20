@@ -20,6 +20,7 @@ class CDModel(pl.LightningModule):
         encoder_speaker_in: bool,
         decoder_hidden_dim: int,
         decoder_num_layers: int,
+        decoder_num_linear_layers: int,
         decoder_speaker_in: bool,
     ):
         super().__init__()
@@ -39,6 +40,7 @@ class CDModel(pl.LightningModule):
             additional_decoder_dim=additional_decoder_dim,
             hidden_dim=decoder_hidden_dim,
             num_layers=decoder_num_layers,
+            num_linear_layers=decoder_num_linear_layers,
             features=features,
         )
 
@@ -66,9 +68,18 @@ class CDModel(pl.LightningModule):
         # ==============================
         encoder_in_arr: list[Tensor] = [features]
         if self.encoder_speaker_in:
-            encoder_in_arr.append(speaker_designation_one_hot[:, 1:, :])
-
+            encoder_in_arr.append(speaker_designation_one_hot)
         encoder_in = torch.cat(encoder_in_arr, -1)
+
+        # Prepare decoder inputs
+        # ==============================
+        additional_decoder_in_arr: list[Tensor] = []
+        if self.decoder_speaker_in:
+            additional_decoder_in_arr.append(speaker_designation_one_hot)
+
+        additional_decoder_in: Tensor | None = None
+        if len(additional_decoder_in_arr):
+            additional_decoder_in = torch.concat(additional_decoder_in_arr, -1)
 
         # Get state objects for the encoder and decoder
         # ==============================
@@ -86,23 +97,14 @@ class CDModel(pl.LightningModule):
             # Encode the current inputs and retrieve the conversation history so far
             history = self.encoder(i=i, state=encoder_state, input=encoder_in[:, i, :])
 
-            # Get the history mask for this prediction timestep
-            mask = history_mask[:, i, : i + 1]
-
-            additional_decoder_in_arr: list[Tensor] = []
-            if self.decoder_speaker_in:
-                additional_decoder_in_arr.append(
-                    speaker_designation_one_hot[:, i, :].unsqueeze(1)
-                )
-
             # Decode output features
             decoded_timestep, weights_timestep = self.decoder(
                 state=decoder_state,
                 input=history,
-                mask=mask,
+                mask=history_mask[:, i, : i + 1],
                 additional_decoder_in=(
-                    torch.cat(additional_decoder_in_arr, dim=-1)
-                    if len(additional_decoder_in_arr) > 0
+                    additional_decoder_in[:, None, i]
+                    if additional_decoder_in is not None
                     else None
                 ),
             )
@@ -113,6 +115,7 @@ class CDModel(pl.LightningModule):
         decoded = torch.concat(decoded_timesteps, dim=1)
 
         # Batch, prediction timesteps, history, 1
+        # TODO: Move this to decoder?
         weights = torch.stack(
             [
                 F.pad(x, (0, 0, 0, features.shape[1] - x.shape[1] - 1))

@@ -19,6 +19,7 @@ class DecoderCell(nn.Module):
         additional_decoder_dim: int,
         hidden_dim: int,
         num_layers: int,
+        num_linear_layers: int,
         features: list[str],
     ):
         super().__init__()
@@ -37,9 +38,10 @@ class DecoderCell(nn.Module):
         )
 
         self.linear = nn.Sequential(
-            nn.Linear(input_dim, input_dim),
-            nn.ELU(),
-            nn.Linear(input_dim, len(features)),
+            *(
+                ([nn.Linear(input_dim, input_dim), nn.ReLU()] * (num_linear_layers - 1))
+                + [nn.Linear(input_dim, len(features))]
+            )
         )
 
     def initialize(self, batch_size: int, device) -> DecoderState:
