@@ -5,9 +5,10 @@ import numpy as np
 import pandas as pd
 import torch
 from lightning import LightningDataModule
-from cdmodel.data.collate_fn import collate_fn
+from sklearn.model_selection import train_test_split
 from torch.utils.data import DataLoader, random_split
 
+from cdmodel.data.collate_fn import collate_fn
 from cdmodel.data.dataset import ConversationDataset, PrimarySpeakerSelectionStrategy
 
 
@@ -27,35 +28,43 @@ class ConversationDataModule(LightningDataModule):
 
         self.dataset_dir: Final[str] = dataset_dir
         self.batch_size: Final[int] = batch_size
-        self.num_workers: Final[int] = num_workers
-
-        self.dataset = ConversationDataset(
-            dataset_dir=dataset_dir,
-            features=features,
-            conv_ids=np.sort(
-                pd.read_csv(path.join(dataset_dir, "data.csv"), engine="pyarrow")[
-                    "id"
-                ].unique()
-            ).tolist(),
-            zero_pad=zero_pad,
-            embeddings=embeddings,
-            normalization=normalization,
-            primary_speaker_selection=primary_speaker_selection,
+        self.features: Final[list[str]] = features
+        self.zero_pad: Final[bool] = zero_pad
+        self.embeddings: Final[str | None] = embeddings
+        self.normalization: Final[str] = normalization
+        self.primary_speaker_selection: Final[PrimarySpeakerSelectionStrategy] = (
+            primary_speaker_selection
         )
+        self.num_workers: Final[int] = num_workers
 
     def prepare_data(self):
         print("Preparing data")
 
     def setup(self, stage: str):
-        self.dataset_train, self.dataset_validate, self.dataset_test = random_split(
-            self.dataset,
-            [0.8, 0.1, 0.1],
-            generator=torch.Generator().manual_seed(42),
+        self.conv_ids_train, self.conv_ids_test = train_test_split(
+            np.sort(
+                pd.read_csv(path.join(self.dataset_dir, "data.csv"), engine="pyarrow")[
+                    "id"
+                ].unique()
+            ).tolist(),
+            random_state=42,
+            train_size=0.8,
+        )
+        self.conv_ids_test, self.conv_ids_val = train_test_split(
+            self.conv_ids_test, random_state=42, test_size=0.5
         )
 
     def train_dataloader(self) -> DataLoader:
         return DataLoader(
-            self.dataset_train,
+            ConversationDataset(
+                dataset_dir=self.dataset_dir,
+                features=self.features,
+                conv_ids=self.conv_ids_train,
+                zero_pad=self.zero_pad,
+                embeddings=self.embeddings,
+                normalization=self.normalization,
+                primary_speaker_selection=self.primary_speaker_selection,
+            ),
             batch_size=self.batch_size,
             pin_memory=True,
             shuffle=True,
@@ -67,7 +76,15 @@ class ConversationDataModule(LightningDataModule):
 
     def val_dataloader(self) -> DataLoader:
         return DataLoader(
-            self.dataset_validate,
+            ConversationDataset(
+                dataset_dir=self.dataset_dir,
+                features=self.features,
+                conv_ids=self.conv_ids_val,
+                zero_pad=self.zero_pad,
+                embeddings=self.embeddings,
+                normalization=self.normalization,
+                primary_speaker_selection=self.primary_speaker_selection,
+            ),
             batch_size=self.batch_size,
             pin_memory=True,
             shuffle=False,
@@ -79,7 +96,15 @@ class ConversationDataModule(LightningDataModule):
 
     def test_dataloader(self) -> DataLoader:
         return DataLoader(
-            self.dataset_test,
+            ConversationDataset(
+                dataset_dir=self.dataset_dir,
+                features=self.features,
+                conv_ids=self.conv_ids_test,
+                zero_pad=self.zero_pad,
+                embeddings=self.embeddings,
+                normalization=self.normalization,
+                primary_speaker_selection=self.primary_speaker_selection,
+            ),
             batch_size=self.batch_size,
             pin_memory=True,
             shuffle=False,
