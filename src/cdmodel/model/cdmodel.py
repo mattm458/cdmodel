@@ -143,14 +143,6 @@ class CDModel(pl.LightningModule):
         spk_rank_one_hot = F.one_hot(spk_rank)[:, :, 1:]  # Speaker rank one-hot encoded
         spk_is_primary = spk_rank == 1  # Identify primary speakers
 
-        # History masks for timestep-level prediction
-        # The dimensions of the tensors below are:
-        #
-        #   batch x prediction timesteps x dialogue history timesteps
-        hist_mask = (spk_rank[:, None, :-1] != spk_rank[:, 1:].unsqueeze(2)) & (
-            spk_rank[:, None, :-1] != 0
-        )
-
         # Prepare encoder inputs
         # ==============================
         enc_in_arr: list[Tensor] = [f]
@@ -189,7 +181,9 @@ class CDModel(pl.LightningModule):
 
         # Get state objects for the encoder and decoder
         # ==============================
-        enc_state = self.enc.init(input=enc_in, lengths=conv_lengths)
+        enc_state = self.enc.init(
+            input=enc_in, lengths=conv_lengths, speaker_rank=spk_rank
+        )
         dec_state = self.dec.init(batch_size=batch_size, device=device)
 
         y_hat_arr: list[Tensor] = []
@@ -200,12 +194,12 @@ class CDModel(pl.LightningModule):
         # Loop through the conversation
         # ==============================
         for i in range(num_steps - 1):
-            hist = self.enc(i=i, state=enc_state, input=enc_in_t)
+            hist, hist_mask = self.enc(i=i, state=enc_state, input=enc_in_t)
 
             y_hat_t, w_t = self.dec(
                 state=dec_state,
                 input=hist,
-                mask=hist_mask[:, i, : i + 1],
+                mask=hist_mask,
                 att_ctx=att_ctx[:, None, i],
                 dec_ctx=dec_ctx[:, None, i],
                 lin_ctx=lin_ctx[:, None, i],

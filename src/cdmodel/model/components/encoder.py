@@ -11,10 +11,18 @@ class EncoderState:
     history: Tensor
     h: Tensor
 
+    # History masks for timestep-level prediction
+    # The dimensions of the tensors below are:
+    #
+    #   batch x prediction timesteps x dialogue history timesteps
+    mask: Tensor
+
 
 class EncoderType(nn.Module, ABC):
     @abstractmethod
-    def init(self, input: Tensor, lengths: Tensor) -> EncoderState:
+    def init(
+        self, input: Tensor, lengths: Tensor, speaker_rank: Tensor
+    ) -> EncoderState:
         pass
 
 
@@ -26,17 +34,25 @@ class Encoder(EncoderType):
             input_dim, hidden_dim, num_layers=num_layers, batch_first=True
         )
 
-    def init(self, input: Tensor, lengths: Tensor) -> EncoderState:
+    def init(
+        self, input: Tensor, lengths: Tensor, speaker_rank: Tensor
+    ) -> EncoderState:
         x = nn.utils.rnn.pack_padded_sequence(
             input=input, lengths=lengths.cpu(), batch_first=True, enforce_sorted=False
         )
         x, h = self.rnn(x)
         history, _ = nn.utils.rnn.pad_packed_sequence(x, batch_first=True)
 
-        return EncoderState(history=history, h=h)
+        mask = (speaker_rank[:, None, :-1] != speaker_rank[:, 1:].unsqueeze(2)) & (
+            speaker_rank[:, None, :-1] != 0
+        )
 
-    def forward(self, i: int, state: EncoderState, input: Tensor) -> Tensor:
-        return state.history[:, : i + 1]
+        return EncoderState(history=history, h=h, mask=mask)
+
+    def forward(
+        self, i: int, state: EncoderState, input: Tensor
+    ) -> tuple[Tensor, Tensor]:
+        return state.history[:, : i + 1], state.mask[:, i, : i + 1]
 
 
 class EncoderCell(EncoderType):
@@ -50,7 +66,9 @@ class EncoderCell(EncoderType):
             input_dim, hidden_dim, num_layers=num_layers, batch_first=True
         )
 
-    def init(self, input: Tensor, lengths: Tensor) -> EncoderState:
+    def init(
+        self, input: Tensor, lengths: Tensor, speaker_rank: Tensor
+    ) -> EncoderState:
         batch_size, num_steps, _ = input.shape
 
         return EncoderState(
@@ -67,9 +85,13 @@ class EncoderCell(EncoderType):
                 self.hidden_size,
                 device=input.device,
             ),
+            mask=(speaker_rank[:, None, :-1] != speaker_rank[:, 1:].unsqueeze(2))
+            & (speaker_rank[:, None, :-1] != 0),
         )
 
-    def forward(self, i: int, state: EncoderState, input: Tensor) -> Tensor:
+    def forward(
+        self, i: int, state: EncoderState, input: Tensor
+    ) -> tuple[Tensor, Tensor]:
         x, state.h = self.rnn(input.unsqueeze(1), state.h)
         state.history[:, i] = x.squeeze(1)
-        return state.history[:, : i + 1]
+        return state.history[:, : i + 1], state.mask[:, i, : i + 1]
