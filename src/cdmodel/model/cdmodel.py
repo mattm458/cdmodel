@@ -14,7 +14,7 @@ from cdmodel.util.visualization import plot_weights
 class CDModel(pl.LightningModule):
     def __init__(
         self,
-        features: list[str],
+        feature_names: list[str],
         embeddings_style: str | None,
         embeddings_linear: bool,
         encoder_hidden_dim: int,
@@ -22,16 +22,27 @@ class CDModel(pl.LightningModule):
         encoder_speaker_in: bool,
         encoder_embeddings_in: bool,
         att_embeddings_in: bool,
+        att_speaker_in: bool,
         decoder_hidden_dim: int,
         decoder_num_layers: int,
         decoder_embeddings_in: bool,
         decoder_speaker_in: bool,
         decoder_num_linear_layers: int,
         decoder_linear_embeddings_in: bool,
+        autoregressive_training: bool,
+        autoregressive_validation: bool,
+        train_primary_speaker_only: bool,
         embeddings_in_dim: int = 0,
         embeddings_dim: int = 0,
     ):
         super().__init__()
+
+        self.feature_names: Final[list[str]] = feature_names
+        self.autoregressive_training: Final[bool] = autoregressive_training
+        self.autoregressive_validation: Final[bool] = autoregressive_validation
+
+        self.train_primary_speaker_only: Final[bool] = train_primary_speaker_only
+
         # Embeddings
         # ==============================
         if embeddings_style is not None:
@@ -47,6 +58,7 @@ class CDModel(pl.LightningModule):
         self.embeddings_style: Final[str | None] = embeddings_style
         self.encoder_embeddings_in: Final[bool] = encoder_embeddings_in
         self.att_embeddings_in: Final[bool] = att_embeddings_in
+        self.att_speaker_in: Final[bool] = att_speaker_in
         self.decoder_embeddings_in: Final[bool] = decoder_embeddings_in
         self.decoder_linear_embeddings_in: Final[bool] = decoder_linear_embeddings_in
 
@@ -58,7 +70,11 @@ class CDModel(pl.LightningModule):
         else:
             if embeddings_dim == 0:
                 embeddings_dim = embeddings_in_dim
-            elif embeddings_dim != 0 and embeddings_dim != embeddings_in_dim:
+            elif (
+                embeddings_style is not None
+                and embeddings_dim != 0
+                and embeddings_dim != embeddings_in_dim
+            ):
                 raise Exception(
                     "A model with embeddings with no an embedding transformation layer must have embeddings_in_dim = embeddings_dim!"
                 )
@@ -67,21 +83,32 @@ class CDModel(pl.LightningModule):
         # ==============================
         self.encoder_speaker_in: Final[bool] = encoder_speaker_in
         encoder_input_dim = (
-            len(features)
+            len(feature_names)
             + (2 if encoder_speaker_in else 0)
             + (embeddings_dim if encoder_embeddings_in else 0)
         )
 
-        self.encoder = Encoder(
-            input_dim=encoder_input_dim,
-            hidden_dim=encoder_hidden_dim,
-            num_layers=encoder_num_layers,
-        )
+        if autoregressive_training or autoregressive_validation:
+            self.encoder = EncoderCell(
+                input_dim=encoder_input_dim,
+                hidden_dim=encoder_hidden_dim,
+                num_layers=encoder_num_layers,
+            )
+        else:
+            self.encoder = Encoder(
+                input_dim=encoder_input_dim,
+                hidden_dim=encoder_hidden_dim,
+                num_layers=encoder_num_layers,
+            )
 
         # Decoder
         # ==============================
+        self.att_speaker_in
         self.decoder_speaker_in: Final[bool] = decoder_speaker_in
-        additional_att_dim = embeddings_dim if att_embeddings_in else 0
+
+        additional_att_dim = (2 if att_speaker_in else 0) + (
+            embeddings_dim if att_embeddings_in else 0
+        )
         additional_decoder_dim = (2 if decoder_speaker_in else 0) + (
             embeddings_dim if decoder_embeddings_in else 0
         )
@@ -97,7 +124,7 @@ class CDModel(pl.LightningModule):
             hidden_dim=decoder_hidden_dim,
             num_layers=decoder_num_layers,
             num_linear_layers=decoder_num_linear_layers,
-            features=features,
+            features=feature_names,
         )
 
     def forward(
@@ -106,6 +133,7 @@ class CDModel(pl.LightningModule):
         conv_lengths: Tensor,
         speaker_designation: Tensor,
         segment_embeddings: Tensor | None,
+        autoregressive: bool,
     ):
         # Pull some metadata from the inputs
         batch_size, num_steps, _ = features.shape
@@ -145,6 +173,8 @@ class CDModel(pl.LightningModule):
         # ==============================
         additional_att_in_arr: list[Tensor] = []
         additional_att_in: Tensor | None = None
+        if self.att_speaker_in:
+            additional_att_in_arr.append(speaker_designation_one_hot[:, 1:])
         if self.att_embeddings_in and embeddings_encoded is not None:
             additional_att_in_arr.append(embeddings_encoded[:, 1:])
         if len(additional_att_in_arr):
@@ -153,7 +183,7 @@ class CDModel(pl.LightningModule):
         additional_decoder_in_arr: list[Tensor] = []
         additional_decoder_in: Tensor | None = None
         if self.decoder_speaker_in:
-            additional_decoder_in_arr.append(speaker_designation_one_hot)
+            additional_decoder_in_arr.append(speaker_designation_one_hot[:, 1:])
         if self.decoder_embeddings_in and embeddings_encoded is not None:
             additional_decoder_in_arr.append(embeddings_encoded[:, 1:])
         if len(additional_decoder_in_arr):
@@ -178,11 +208,13 @@ class CDModel(pl.LightningModule):
         decoded_timesteps: list[Tensor] = []
         weights_timesteps: list[Tensor] = []
 
+        encoder_in_t: Tensor = encoder_in[:, 0]
+
         # Loop through the conversation
         # ==============================
         for i in range(num_steps - 1):
             # Encode the current inputs and retrieve the conversation history so far
-            history = self.encoder(i=i, state=encoder_state, input=encoder_in[:, i, :])
+            history = self.encoder(i=i, state=encoder_state, input=encoder_in_t)
 
             # Decode output features
             decoded_timestep, weights_timestep = self.decoder(
@@ -209,6 +241,16 @@ class CDModel(pl.LightningModule):
             decoded_timesteps.append(decoded_timestep)
             weights_timesteps.append(weights_timestep)
 
+            # Handle autoregressive training if enabled
+            encoder_in_t = encoder_in[:, i + 1]
+            if autoregressive:
+                speaker_is_primary_t = speaker_designation[:, i + 1] == 1
+                encoder_in_t[speaker_is_primary_t, : len(self.feature_names)] = (
+                    decoded_timestep.squeeze(1)[speaker_is_primary_t]
+                    .detach()
+                    .type(encoder_in_t.dtype)
+                )
+
         decoded = torch.concat(decoded_timesteps, dim=1)
 
         # Batch, prediction timesteps, history, 1
@@ -231,10 +273,14 @@ class CDModel(pl.LightningModule):
             conv_lengths=batch.conv_lengths,
             speaker_designation=batch.speaker_designation,
             segment_embeddings=batch.segment_embeddings,
+            autoregressive=self.autoregressive_training,
         )
         y = batch.features[:, 1:]
 
-        mask = batch.speaker_designation[:, 1:] != 0
+        if self.train_primary_speaker_only:
+            mask = batch.speaker_designation[:, 1:] == 1
+        else:
+            mask = batch.speaker_designation[:, 1:] != 0
 
         loss = F.mse_loss(y_hat[mask], y[mask])
 
@@ -257,10 +303,14 @@ class CDModel(pl.LightningModule):
             conv_lengths=batch.conv_lengths,
             speaker_designation=batch.speaker_designation,
             segment_embeddings=batch.segment_embeddings,
+            autoregressive=self.autoregressive_validation,
         )
         y = batch.features[:, 1:]
 
-        mask = batch.speaker_designation[:, 1:] != 0
+        if self.train_primary_speaker_only:
+            mask = batch.speaker_designation[:, 1:] == 1
+        else:
+            mask = batch.speaker_designation[:, 1:] != 0
 
         loss = F.mse_loss(y_hat[mask], y[mask])
 
