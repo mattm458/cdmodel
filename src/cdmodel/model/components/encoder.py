@@ -8,14 +8,14 @@ from torch import Tensor, nn
 @dataclass
 class EncoderState:
     history: Tensor
-    h: tuple[Tensor, Tensor]
+    h: Tensor
 
 
 class Encoder(nn.Module):
     def __init__(self, input_dim: int, hidden_dim: int, num_layers: int):
         super().__init__()
 
-        self.rnn = nn.LSTM(
+        self.rnn = nn.GRU(
             input_dim, hidden_dim, num_layers=num_layers, batch_first=True
         )
 
@@ -33,14 +33,14 @@ class Encoder(nn.Module):
 
 
 class EncoderCell(nn.Module):
-    def __init__(self, input_size: int, hidden_size: int, num_layers: int):
+    def __init__(self, input_dim: int, hidden_dim: int, num_layers: int):
         super().__init__()
 
-        self.hidden_size: Final[int] = hidden_size
+        self.hidden_size: Final[int] = hidden_dim
         self.num_layers: Final[int] = num_layers
 
-        self.rnn = nn.LSTM(
-            input_size, hidden_size, num_layers=num_layers, batch_first=True
+        self.rnn = nn.GRU(
+            input_dim, hidden_dim, num_layers=num_layers, batch_first=True
         )
 
     def initialize(self, input: Tensor, lengths: Tensor):
@@ -54,19 +54,11 @@ class EncoderCell(nn.Module):
                 device=input.device,
                 dtype=input.dtype,
             ),
-            h=(
-                torch.zeros(
-                    self.num_layers,
-                    batch_size,
-                    self.hidden_size,
-                    device=input.device,
-                ),
-                torch.zeros(
-                    self.num_layers,
-                    batch_size,
-                    self.hidden_size,
-                    device=input.device,
-                ),
+            h=torch.zeros(
+                self.num_layers,
+                batch_size,
+                self.hidden_size,
+                device=input.device,
             ),
         )
 

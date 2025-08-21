@@ -9,7 +9,7 @@ from cdmodel.model.components.attention import AdditiveAttention
 
 @dataclass
 class DecoderState:
-    h: tuple[Tensor, Tensor]
+    h: Tensor
 
 
 class DecoderCell(nn.Module):
@@ -33,7 +33,7 @@ class DecoderCell(nn.Module):
             hidden_dim=input_dim,
             query_dim=(hidden_dim * num_layers) + additional_att_dim,
         )
-        self.rnn = nn.LSTM(
+        self.rnn = nn.GRU(
             input_dim + additional_decoder_dim,
             hidden_dim,
             num_layers=num_layers,
@@ -53,14 +53,7 @@ class DecoderCell(nn.Module):
 
     def initialize(self, batch_size: int, device) -> DecoderState:
         return DecoderState(
-            h=(
-                torch.zeros(
-                    self.num_layers, batch_size, self.hidden_size, device=device
-                ),
-                torch.zeros(
-                    self.num_layers, batch_size, self.hidden_size, device=device
-                ),
-            )
+            h=torch.zeros(self.num_layers, batch_size, self.hidden_size, device=device)
         )
 
     def forward(
@@ -73,7 +66,7 @@ class DecoderCell(nn.Module):
         mask: Optional[Tensor] = None,
     ):
         batch_size = input.shape[0]
-        query = state.h[0].permute(1, 0, 2).reshape(batch_size, -1)
+        query = state.h.permute(1, 0, 2).reshape(batch_size, -1)
 
         if additional_att_in is not None:
             query = torch.cat([query, additional_att_in.squeeze(1)], -1)
