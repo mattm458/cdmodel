@@ -1,15 +1,9 @@
-from dataclasses import dataclass
 from typing import Final, Optional
 
 import torch
 from torch import Tensor, nn
 
 from cdmodel.model.components.attention import AdditiveAttention
-
-
-@dataclass
-class DecoderState:
-    h: Tensor
 
 
 class DecoderCell(nn.Module):
@@ -48,15 +42,13 @@ class DecoderCell(nn.Module):
             )
         )
 
-    def init(self, batch_size: int, device) -> DecoderState:
-        return DecoderState(
-            h=torch.zeros(self.num_layers, batch_size, self.hidden_size, device=device)
-        )
+    def init(self, batch_size: int, device) -> Tensor:
+        return torch.zeros(self.num_layers, batch_size, self.hidden_size, device=device)
 
     def forward(
         self,
-        state: DecoderState,
         input: Tensor,
+        h: Tensor,
         att_ctx: Tensor,
         dec_ctx: Tensor,
         lin_ctx: Tensor,
@@ -64,12 +56,12 @@ class DecoderCell(nn.Module):
     ):
         batch_size = input.shape[0]
 
-        q = state.h.permute(1, 0, 2).reshape(batch_size, -1)
+        q = h.permute(1, 0, 2).reshape(batch_size, -1)
         x, weights = self.attention(
             query=torch.cat([q, att_ctx.squeeze(1)], -1), keys=input, mask=mask
         )
 
-        x, state.h = self.rnn(torch.concat([x, dec_ctx], dim=-1), state.h)
+        x, h = self.rnn(torch.concat([x, dec_ctx], dim=-1), h)
         outputs = self.linear(torch.cat([x, lin_ctx], -1))
 
-        return outputs, weights
+        return outputs, h, weights

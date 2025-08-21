@@ -1,28 +1,13 @@
 from abc import ABC, abstractmethod
-from dataclasses import dataclass
 from typing import Final
 
 import torch
 from torch import Tensor, nn
 
 
-@dataclass
-class EncoderState:
-    history: Tensor
-    h: Tensor
-
-    # History masks for timestep-level prediction
-    # The dimensions of the tensors below are:
-    #
-    #   batch x prediction timesteps x dialogue history timesteps
-    mask: Tensor
-
-
 class EncoderType(nn.Module, ABC):
     @abstractmethod
-    def init(
-        self, input: Tensor, lengths: Tensor, speaker_rank: Tensor
-    ) -> EncoderState:
+    def init(self, input: Tensor, lengths: Tensor) -> tuple[Tensor, Tensor]:
         pass
 
 
@@ -34,25 +19,19 @@ class Encoder(EncoderType):
             input_dim, hidden_dim, num_layers=num_layers, batch_first=True
         )
 
-    def init(
-        self, input: Tensor, lengths: Tensor, speaker_rank: Tensor
-    ) -> EncoderState:
+    def init(self, input: Tensor, lengths: Tensor) -> tuple[Tensor, Tensor]:
         x = nn.utils.rnn.pack_padded_sequence(
             input=input, lengths=lengths.cpu(), batch_first=True, enforce_sorted=False
         )
         x, h = self.rnn(x)
         history, _ = nn.utils.rnn.pad_packed_sequence(x, batch_first=True)
 
-        mask = (speaker_rank[:, None, :-1] != speaker_rank[:, 1:].unsqueeze(2)) & (
-            speaker_rank[:, None, :-1] != 0
-        )
-
-        return EncoderState(history=history, h=h, mask=mask)
+        return history, h
 
     def forward(
-        self, i: int, state: EncoderState, input: Tensor
+        self, i: int, history: Tensor, h: Tensor, input: Tensor
     ) -> tuple[Tensor, Tensor]:
-        return state.history[:, : i + 1], state.mask[:, i, : i + 1]
+        return history, h
 
 
 class EncoderCell(EncoderType):
@@ -66,32 +45,28 @@ class EncoderCell(EncoderType):
             input_dim, hidden_dim, num_layers=num_layers, batch_first=True
         )
 
-    def init(
-        self, input: Tensor, lengths: Tensor, speaker_rank: Tensor
-    ) -> EncoderState:
+    def init(self, input: Tensor, lengths: Tensor) -> tuple[Tensor, Tensor]:
         batch_size, num_steps, _ = input.shape
-
-        return EncoderState(
-            history=torch.zeros(
-                batch_size,
-                num_steps,
-                self.hidden_size,
-                device=input.device,
-                dtype=input.dtype,
-            ),
-            h=torch.zeros(
-                self.num_layers,
-                batch_size,
-                self.hidden_size,
-                device=input.device,
-            ),
-            mask=(speaker_rank[:, None, :-1] != speaker_rank[:, 1:].unsqueeze(2))
-            & (speaker_rank[:, None, :-1] != 0),
+        return torch.zeros(
+            batch_size,
+            num_steps - 1,
+            self.hidden_size,
+            device=input.device,
+            dtype=input.dtype,
+        ), torch.zeros(
+            self.num_layers,
+            batch_size,
+            self.hidden_size,
+            device=input.device,
         )
 
     def forward(
-        self, i: int, state: EncoderState, input: Tensor
+        self, i: int, history: Tensor, h: Tensor, input: Tensor
     ) -> tuple[Tensor, Tensor]:
-        x, state.h = self.rnn(input.unsqueeze(1), state.h)
-        state.history[:, i] = x.squeeze(1)
-        return state.history[:, : i + 1], state.mask[:, i, : i + 1]
+        x, h = self.rnn(input.unsqueeze(1), h)
+        return (
+            history.index_copy(
+                1, torch.tensor([i], device=history.device), x.type(history.dtype)
+            ),
+            h,
+        )

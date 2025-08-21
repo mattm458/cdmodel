@@ -181,10 +181,12 @@ class CDModel(pl.LightningModule):
 
         # Get state objects for the encoder and decoder
         # ==============================
-        enc_state = self.enc.init(
-            input=enc_in, lengths=conv_lengths, speaker_rank=spk_rank
-        )
-        dec_state = self.dec.init(batch_size=batch_size, device=device)
+        hist, enc_h = self.enc.init(input=enc_in, lengths=conv_lengths)
+        hist_mask = (
+            (spk_rank[:, None, :-1] != spk_rank[:, 1:].unsqueeze(2))
+            & (spk_rank[:, None, :-1] != 0)
+        ).tril()
+        dec_h = self.dec.init(batch_size=batch_size, device=device)
 
         y_hat_arr: list[Tensor] = []
         w_arr: list[Tensor] = []
@@ -194,12 +196,11 @@ class CDModel(pl.LightningModule):
         # Loop through the conversation
         # ==============================
         for i in range(num_steps - 1):
-            hist, hist_mask = self.enc(i=i, state=enc_state, input=enc_in_t)
-
-            y_hat_t, w_t = self.dec(
-                state=dec_state,
+            hist, enc_h = self.enc(i=i, history=hist, h=enc_h, input=enc_in_t)
+            y_hat_t, dec_h, w_t = self.dec(
                 input=hist,
-                mask=hist_mask,
+                h=dec_h,
+                mask=hist_mask[:, i],
                 att_ctx=att_ctx[:, None, i],
                 dec_ctx=dec_ctx[:, None, i],
                 lin_ctx=lin_ctx[:, None, i],
