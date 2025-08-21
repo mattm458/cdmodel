@@ -7,7 +7,7 @@ from torch.nn import functional as F
 
 from cdmodel.common.data import ConversationBatch
 from cdmodel.model.components.decoder import DecoderCell
-from cdmodel.model.components.encoder import Encoder, EncoderCell
+from cdmodel.model.components.encoder import Encoder, EncoderCell, EncoderType
 from cdmodel.util.visualization import plot_weights
 
 
@@ -15,115 +15,113 @@ class CDModel(pl.LightningModule):
     def __init__(
         self,
         feature_names: list[str],
-        embeddings_style: str | None,
-        embeddings_linear: bool,
-        encoder_hidden_dim: int,
-        encoder_num_layers: int,
-        encoder_speaker_in: bool,
-        encoder_embeddings_in: bool,
-        att_embeddings_in: bool,
-        att_speaker_in: bool,
-        decoder_hidden_dim: int,
-        decoder_num_layers: int,
-        decoder_embeddings_in: bool,
-        decoder_speaker_in: bool,
-        decoder_num_linear_layers: int,
-        decoder_linear_embeddings_in: bool,
-        autoregressive_training: bool,
-        autoregressive_validation: bool,
+        emb_style: str | None,
+        emb_proj: bool,
+        enc_h_dim: int,
+        enc_layers: int,
+        enc_spk_in: bool,
+        enc_emb_in: bool,
+        att_emb_in: bool,
+        att_spk_in: bool,
+        dec_h_dim: int,
+        dec_layers: int,
+        dec_emb_in: bool,
+        dec_spk_in: bool,
+        lin_num_layers: int,
+        lin_emb_in: bool,
+        ar_train: bool,
+        ar_val: bool,
         train_primary_speaker_only: bool,
-        embeddings_in_dim: int = 0,
-        embeddings_dim: int = 0,
+        emb_dim: int = 0,
+        emb_proj_dim: int = 0,
     ):
         super().__init__()
 
         self.feature_names: Final[list[str]] = feature_names
-        self.autoregressive_training: Final[bool] = autoregressive_training
-        self.autoregressive_validation: Final[bool] = autoregressive_validation
+        self.autoregressive_training: Final[bool] = ar_train
+        self.autoregressive_validation: Final[bool] = ar_val
 
         self.train_primary_speaker_only: Final[bool] = train_primary_speaker_only
 
         # Embeddings
         # ==============================
-        if embeddings_style is not None:
-            if embeddings_in_dim == 0:
-                raise Exception("embeddings_in_dim must be specified ")
-        if embeddings_style is None and (
-            encoder_embeddings_in
-            or att_embeddings_in
-            or decoder_embeddings_in
-            or decoder_linear_embeddings_in
-        ):
-            raise Exception("Embeddings must be active to use as input!")
-        self.embeddings_style: Final[str | None] = embeddings_style
-        self.encoder_embeddings_in: Final[bool] = encoder_embeddings_in
-        self.att_embeddings_in: Final[bool] = att_embeddings_in
-        self.att_speaker_in: Final[bool] = att_speaker_in
-        self.decoder_embeddings_in: Final[bool] = decoder_embeddings_in
-        self.decoder_linear_embeddings_in: Final[bool] = decoder_linear_embeddings_in
+        self.use_emb: Final[bool] = emb_style is not None
+        self.emb_style: Final[str | None] = emb_style
+        self.enc_emb_in: Final[bool] = enc_emb_in
+        self.att_emb_in: Final[bool] = att_emb_in
+        self.att_spk_in: Final[bool] = att_spk_in
+        self.dec_emb_in: Final[bool] = dec_emb_in
+        self.lin_emb_in: Final[bool] = lin_emb_in
 
-        self.embeddings_linear = None
-        if embeddings_linear:
-            self.embeddings_linear = nn.Sequential(
-                nn.Linear(embeddings_in_dim, embeddings_dim), nn.Tanh()
-            )
-        else:
-            if embeddings_dim == 0:
-                embeddings_dim = embeddings_in_dim
-            elif (
-                embeddings_style is not None
-                and embeddings_dim != 0
-                and embeddings_dim != embeddings_in_dim
-            ):
+        self.emb_proj: nn.Module | None = None
+        if self.use_emb:
+            if emb_dim == 0:
+                raise ValueError(
+                    "emb_dim must be specified when embeddings are enabled."
+                )
+            if not (enc_emb_in and att_emb_in and dec_emb_in and lin_emb_in):
                 raise Exception(
-                    "A model with embeddings with no an embedding transformation layer must have embeddings_in_dim = embeddings_dim!"
+                    "Embeddings are enabled, but they are not given as input to any component"
+                )
+
+            self.emb_proj = nn.Identity()
+            if emb_proj:
+                self.emb_proj = nn.Sequential(
+                    nn.Linear(emb_dim, emb_proj_dim), nn.Tanh()
+                )
+            else:
+                if emb_proj_dim != 0 and emb_proj_dim != emb_dim:
+                    raise ValueError(
+                        "If emb_proj is False, emb_proj_dim must equal emb_dim."
+                    )
+                emb_proj_dim = emb_proj_dim or emb_dim
+        else:
+            if emb_proj:
+                raise ValueError("emb_proj is True, but embeddings are disabled.")
+            if enc_emb_in or att_emb_in or dec_emb_in or lin_emb_in:
+                raise Exception(
+                    "Embeddings are configured as model component inputs, but embeddings are disabled."
                 )
 
         # Encoder
         # ==============================
-        self.encoder_speaker_in: Final[bool] = encoder_speaker_in
-        encoder_input_dim = (
+        self.enc_spk_in: Final[bool] = enc_spk_in
+        enc_in_dim = (
             len(feature_names)
-            + (2 if encoder_speaker_in else 0)
-            + (embeddings_dim if encoder_embeddings_in else 0)
+            + (2 if enc_spk_in else 0)
+            + (emb_proj_dim if enc_emb_in else 0)
         )
 
-        if autoregressive_training or autoregressive_validation:
-            self.encoder = EncoderCell(
-                input_dim=encoder_input_dim,
-                hidden_dim=encoder_hidden_dim,
-                num_layers=encoder_num_layers,
+        self.enc: EncoderType
+        if ar_train or ar_val:
+            self.enc = EncoderCell(
+                input_dim=enc_in_dim,
+                hidden_dim=enc_h_dim,
+                num_layers=enc_layers,
             )
         else:
-            self.encoder = Encoder(
-                input_dim=encoder_input_dim,
-                hidden_dim=encoder_hidden_dim,
-                num_layers=encoder_num_layers,
+            self.enc = Encoder(
+                input_dim=enc_in_dim,
+                hidden_dim=enc_h_dim,
+                num_layers=enc_layers,
             )
 
         # Decoder
         # ==============================
-        self.att_speaker_in
-        self.decoder_speaker_in: Final[bool] = decoder_speaker_in
+        self.dec_spk_in: Final[bool] = dec_spk_in
 
-        additional_att_dim = (2 if att_speaker_in else 0) + (
-            embeddings_dim if att_embeddings_in else 0
-        )
-        additional_decoder_dim = (2 if decoder_speaker_in else 0) + (
-            embeddings_dim if decoder_embeddings_in else 0
-        )
-        additional_decoder_linear_dim = (
-            embeddings_dim if decoder_linear_embeddings_in else 0
-        )
+        att_ctx_dim = (2 if att_spk_in else 0) + (emb_proj_dim if att_emb_in else 0)
+        dec_ctx_dim = (2 if dec_spk_in else 0) + (emb_proj_dim if dec_emb_in else 0)
+        lin_ctx_dim = emb_proj_dim if lin_emb_in else 0
 
-        self.decoder = DecoderCell(
-            input_dim=encoder_hidden_dim,
-            additional_att_dim=additional_att_dim,
-            additional_decoder_dim=additional_decoder_dim,
-            additional_decoder_linear_dim=additional_decoder_linear_dim,
-            hidden_dim=decoder_hidden_dim,
-            num_layers=decoder_num_layers,
-            num_linear_layers=decoder_num_linear_layers,
+        self.dec = DecoderCell(
+            in_dim=enc_h_dim,
+            att_ctx_dim=att_ctx_dim,
+            ctx_dim=dec_ctx_dim,
+            lin_ctx_dim=lin_ctx_dim,
+            h_dim=dec_h_dim,
+            num_layers=dec_layers,
+            lin_num_layers=lin_num_layers,
             features=feature_names,
         )
 
@@ -132,19 +130,21 @@ class CDModel(pl.LightningModule):
         features: Tensor,
         conv_lengths: Tensor,
         speaker_designation: Tensor,
-        segment_embeddings: Tensor | None,
+        segment_emb: Tensor | None,
         autoregressive: bool,
     ):
         # Pull some metadata from the inputs
-        batch_size, num_steps, _ = features.shape
+        (batch_size, num_steps, _), device = features.shape, features.device
+
+        if self.use_emb and segment_emb is None:
+            raise Exception(
+                "Embeddings are active, but no embeddings were given as input"
+            )
 
         # Prepare embeddings
-        embeddings_encoded = None
-        if segment_embeddings is not None:
-            if self.embeddings_linear is not None:
-                embeddings_encoded = self.embeddings_linear(segment_embeddings)
-            else:
-                embeddings_encoded = segment_embeddings
+        emb_proj: Tensor | None = None
+        if self.use_emb and self.emb_proj:
+            emb_proj = self.emb_proj(segment_emb)
 
         # Prepare various input data
         # ==============================
@@ -163,92 +163,74 @@ class CDModel(pl.LightningModule):
         # Prepare encoder inputs
         # ==============================
         encoder_in_arr: list[Tensor] = [features]
-        if self.encoder_speaker_in:
+        if self.enc_spk_in:
             encoder_in_arr.append(speaker_designation_one_hot)
-        if self.encoder_embeddings_in and embeddings_encoded is not None:
-            encoder_in_arr.append(embeddings_encoded)
-        encoder_in = torch.cat(encoder_in_arr, -1)
+        if self.enc_emb_in and emb_proj is not None:
+            encoder_in_arr.append(emb_proj)
+        enc_in = torch.cat(encoder_in_arr, -1)
 
         # Prepare decoder inputs
         # ==============================
         additional_att_in_arr: list[Tensor] = []
-        additional_att_in: Tensor | None = None
-        if self.att_speaker_in:
+        att_ctx: Tensor | None = None
+        if self.att_spk_in:
             additional_att_in_arr.append(speaker_designation_one_hot[:, 1:])
-        if self.att_embeddings_in and embeddings_encoded is not None:
-            additional_att_in_arr.append(embeddings_encoded[:, 1:])
+        if self.att_emb_in and emb_proj is not None:
+            additional_att_in_arr.append(emb_proj[:, 1:])
         if len(additional_att_in_arr):
-            additional_att_in = torch.concat(additional_att_in_arr, -1)
+            att_ctx = torch.concat(additional_att_in_arr, -1)
 
-        additional_decoder_in_arr: list[Tensor] = []
-        additional_decoder_in: Tensor | None = None
-        if self.decoder_speaker_in:
-            additional_decoder_in_arr.append(speaker_designation_one_hot[:, 1:])
-        if self.decoder_embeddings_in and embeddings_encoded is not None:
-            additional_decoder_in_arr.append(embeddings_encoded[:, 1:])
-        if len(additional_decoder_in_arr):
-            additional_decoder_in = torch.concat(additional_decoder_in_arr, -1)
+        dec_ctx_arr: list[Tensor] = []
+        dec_ctx: Tensor | None = None
+        if self.dec_spk_in:
+            dec_ctx_arr.append(speaker_designation_one_hot[:, 1:])
+        if self.dec_emb_in and emb_proj is not None:
+            dec_ctx_arr.append(emb_proj[:, 1:])
+        if len(dec_ctx_arr):
+            dec_ctx = torch.concat(dec_ctx_arr, -1)
 
-        additional_decoder_linear_in_arr: list[Tensor] = []
-        additional_decoder_linear_in: Tensor | None = None
-        if self.decoder_linear_embeddings_in and embeddings_encoded is not None:
-            additional_decoder_linear_in_arr.append(embeddings_encoded[:, 1:])
-        if len(additional_decoder_linear_in_arr):
-            additional_decoder_linear_in = torch.concat(
-                additional_decoder_linear_in_arr, -1
-            )
+        lin_ctx_arr: list[Tensor] = []
+        lin_ctx: Tensor | None = None
+        if self.lin_emb_in and emb_proj is not None:
+            lin_ctx_arr.append(emb_proj[:, 1:])
+        if len(lin_ctx_arr):
+            lin_ctx = torch.concat(lin_ctx_arr, -1)
 
         # Get state objects for the encoder and decoder
         # ==============================
-        encoder_state = self.encoder.initialize(input=encoder_in, lengths=conv_lengths)
-        decoder_state = self.decoder.initialize(
-            batch_size=batch_size, device=features.device
-        )
+        enc_state = self.enc.init(input=enc_in, lengths=conv_lengths)
+        dec_state = self.dec.init(batch_size=batch_size, device=device)
 
         decoded_timesteps: list[Tensor] = []
         weights_timesteps: list[Tensor] = []
 
-        encoder_in_t: Tensor = encoder_in[:, 0]
+        enc_in_t: Tensor = enc_in[:, 0]
 
         # Loop through the conversation
         # ==============================
         for i in range(num_steps - 1):
             # Encode the current inputs and retrieve the conversation history so far
-            history = self.encoder(i=i, state=encoder_state, input=encoder_in_t)
+            history = self.enc(i=i, state=enc_state, input=enc_in_t)
 
             # Decode output features
-            decoded_timestep, weights_timestep = self.decoder(
-                state=decoder_state,
+            dec_t, w_t = self.dec(
+                state=dec_state,
                 input=history,
                 mask=history_mask[:, i, : i + 1],
-                additional_att_in=(
-                    additional_att_in[:, None, i]
-                    if additional_att_in is not None
-                    else None
-                ),
-                additional_decoder_in=(
-                    additional_decoder_in[:, None, i]
-                    if additional_decoder_in is not None
-                    else None
-                ),
-                additional_decoder_linear_in=(
-                    additional_decoder_linear_in[:, None, i]
-                    if additional_decoder_linear_in is not None
-                    else None
-                ),
+                att_ctx=(att_ctx[:, None, i] if att_ctx is not None else None),
+                dec_ctx=(dec_ctx[:, None, i] if dec_ctx is not None else None),
+                lin_ctx=(lin_ctx[:, None, i] if lin_ctx is not None else None),
             )
 
-            decoded_timesteps.append(decoded_timestep)
-            weights_timesteps.append(weights_timestep)
+            decoded_timesteps.append(dec_t)
+            weights_timesteps.append(w_t)
 
             # Handle autoregressive training if enabled
-            encoder_in_t = encoder_in[:, i + 1]
+            enc_in_t = enc_in[:, i + 1]
             if autoregressive:
                 speaker_is_primary_t = speaker_designation[:, i + 1] == 1
-                encoder_in_t[speaker_is_primary_t, : len(self.feature_names)] = (
-                    decoded_timestep.squeeze(1)[speaker_is_primary_t]
-                    .detach()
-                    .type(encoder_in_t.dtype)
+                enc_in_t[speaker_is_primary_t, : len(self.feature_names)] = (
+                    dec_t.squeeze(1)[speaker_is_primary_t].detach().type(enc_in_t.dtype)
                 )
 
         decoded = torch.concat(decoded_timesteps, dim=1)
@@ -272,7 +254,7 @@ class CDModel(pl.LightningModule):
             features=batch.features,
             conv_lengths=batch.conv_lengths,
             speaker_designation=batch.speaker_designation,
-            segment_embeddings=batch.segment_embeddings,
+            segment_emb=batch.segment_embeddings,
             autoregressive=self.autoregressive_training,
         )
         y = batch.features[:, 1:]
@@ -302,7 +284,7 @@ class CDModel(pl.LightningModule):
             features=batch.features,
             conv_lengths=batch.conv_lengths,
             speaker_designation=batch.speaker_designation,
-            segment_embeddings=batch.segment_embeddings,
+            segment_emb=batch.segment_embeddings,
             autoregressive=self.autoregressive_validation,
         )
         y = batch.features[:, 1:]

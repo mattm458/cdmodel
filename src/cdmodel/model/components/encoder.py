@@ -1,3 +1,4 @@
+from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from typing import Final
 
@@ -11,7 +12,13 @@ class EncoderState:
     h: Tensor
 
 
-class Encoder(nn.Module):
+class EncoderType(nn.Module, ABC):
+    @abstractmethod
+    def init(self, input: Tensor, lengths: Tensor) -> EncoderState:
+        pass
+
+
+class Encoder(EncoderType):
     def __init__(self, input_dim: int, hidden_dim: int, num_layers: int):
         super().__init__()
 
@@ -19,7 +26,7 @@ class Encoder(nn.Module):
             input_dim, hidden_dim, num_layers=num_layers, batch_first=True
         )
 
-    def initialize(self, input: Tensor, lengths: Tensor):
+    def init(self, input: Tensor, lengths: Tensor) -> EncoderState:
         x = nn.utils.rnn.pack_padded_sequence(
             input=input, lengths=lengths.cpu(), batch_first=True, enforce_sorted=False
         )
@@ -32,7 +39,7 @@ class Encoder(nn.Module):
         return state.history[:, : i + 1]
 
 
-class EncoderCell(nn.Module):
+class EncoderCell(EncoderType):
     def __init__(self, input_dim: int, hidden_dim: int, num_layers: int):
         super().__init__()
 
@@ -43,7 +50,7 @@ class EncoderCell(nn.Module):
             input_dim, hidden_dim, num_layers=num_layers, batch_first=True
         )
 
-    def initialize(self, input: Tensor, lengths: Tensor):
+    def init(self, input: Tensor, lengths: Tensor) -> EncoderState:
         batch_size, num_steps, _ = input.shape
 
         return EncoderState(

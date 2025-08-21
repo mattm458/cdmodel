@@ -15,43 +15,40 @@ class DecoderState:
 class DecoderCell(nn.Module):
     def __init__(
         self,
-        input_dim: int,
-        additional_att_dim: int,
-        additional_decoder_dim: int,
-        additional_decoder_linear_dim: int,
-        hidden_dim: int,
+        in_dim: int,
+        att_ctx_dim: int,
+        ctx_dim: int,
+        lin_ctx_dim: int,
+        h_dim: int,
         num_layers: int,
-        num_linear_layers: int,
+        lin_num_layers: int,
         features: list[str],
     ):
         super().__init__()
 
-        self.hidden_size: Final[int] = hidden_dim
+        self.hidden_size: Final[int] = h_dim
         self.num_layers: Final[int] = num_layers
 
         self.attention = AdditiveAttention(
-            hidden_dim=input_dim,
-            query_dim=(hidden_dim * num_layers) + additional_att_dim,
+            hidden_dim=in_dim,
+            query_dim=(h_dim * num_layers) + att_ctx_dim,
         )
         self.rnn = nn.GRU(
-            input_dim + additional_decoder_dim,
-            hidden_dim,
+            in_dim + ctx_dim,
+            h_dim,
             num_layers=num_layers,
             batch_first=True,
         )
 
-        linear_dim = input_dim + additional_decoder_linear_dim
+        linear_dim = in_dim + lin_ctx_dim
         self.linear = nn.Sequential(
             *(
-                (
-                    [nn.Linear(linear_dim, linear_dim), nn.ReLU()]
-                    * (num_linear_layers - 1)
-                )
+                ([nn.Linear(linear_dim, linear_dim), nn.ReLU()] * (lin_num_layers - 1))
                 + [nn.Linear(linear_dim, len(features))]
             )
         )
 
-    def initialize(self, batch_size: int, device) -> DecoderState:
+    def init(self, batch_size: int, device) -> DecoderState:
         return DecoderState(
             h=torch.zeros(self.num_layers, batch_size, self.hidden_size, device=device)
         )
@@ -60,26 +57,27 @@ class DecoderCell(nn.Module):
         self,
         state: DecoderState,
         input: Tensor,
-        additional_att_in: Optional[Tensor] = None,
-        additional_decoder_in: Optional[Tensor] = None,
-        additional_decoder_linear_in: Optional[Tensor] = None,
+        att_ctx: Optional[Tensor] = None,
+        dec_ctx: Optional[Tensor] = None,
+        lin_ctx: Optional[Tensor] = None,
         mask: Optional[Tensor] = None,
     ):
         batch_size = input.shape[0]
+
         query = state.h.permute(1, 0, 2).reshape(batch_size, -1)
 
-        if additional_att_in is not None:
-            query = torch.cat([query, additional_att_in.squeeze(1)], -1)
+        if att_ctx is not None:
+            query = torch.cat([query, att_ctx.squeeze(1)], -1)
 
-        context, weights = self.attention(query=query, keys=input, mask=mask)
+        x, weights = self.attention(query=query, keys=input, mask=mask)
 
-        if additional_decoder_in is not None:
-            context = torch.concat([context, additional_decoder_in], dim=-1)
+        if dec_ctx is not None:
+            x = torch.concat([x, dec_ctx], dim=-1)
 
-        x, state.h = self.rnn(context, state.h)
+        x, state.h = self.rnn(x, state.h)
 
-        if additional_decoder_linear_in is not None:
-            x = torch.cat([x, additional_decoder_linear_in], -1)
+        if lin_ctx is not None:
+            x = torch.cat([x, lin_ctx], -1)
 
         outputs = self.linear(x)
         return outputs, weights
