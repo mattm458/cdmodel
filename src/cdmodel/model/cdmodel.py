@@ -37,15 +37,10 @@ class CDModel(pl.LightningModule):
     ):
         super().__init__()
 
-        self.feature_names: Final[list[str]] = feature_names
-        self.autoregressive_training: Final[bool] = ar_train
-        self.autoregressive_validation: Final[bool] = ar_val
+        self.num_features: Final[int] = len(feature_names)
+        self.ar_train: Final[bool] = ar_train
+        self.ar_val: Final[bool] = ar_val
 
-        self.train_primary_speaker_only: Final[bool] = train_primary_speaker_only
-
-        # Embeddings
-        # ==============================
-        self.use_emb: Final[bool] = emb_style is not None
         self.emb_style: Final[str | None] = emb_style
         self.enc_emb_in: Final[bool] = enc_emb_in
         self.att_emb_in: Final[bool] = att_emb_in
@@ -53,13 +48,19 @@ class CDModel(pl.LightningModule):
         self.dec_emb_in: Final[bool] = dec_emb_in
         self.lin_emb_in: Final[bool] = lin_emb_in
 
+        self.train_primary_speaker_only: Final[bool] = train_primary_speaker_only
+
+        # Embeddings
+        # ==============================
+        self.use_emb: Final[bool] = emb_style is not None
+
         self.emb_proj: nn.Module | None = None
         if self.use_emb:
             if emb_dim == 0:
                 raise ValueError(
                     "emb_dim must be specified when embeddings are enabled."
                 )
-            if not (enc_emb_in and att_emb_in and dec_emb_in and lin_emb_in):
+            if not enc_emb_in and not att_emb_in and not dec_emb_in and not lin_emb_in:
                 raise Exception(
                     "Embeddings are enabled, but they are not given as input to any component"
                 )
@@ -86,11 +87,7 @@ class CDModel(pl.LightningModule):
         # Encoder
         # ==============================
         self.enc_spk_in: Final[bool] = enc_spk_in
-        enc_in_dim = (
-            len(feature_names)
-            + (2 if enc_spk_in else 0)
-            + (emb_proj_dim if enc_emb_in else 0)
-        )
+        enc_in_dim = self.num_features + (2 * enc_spk_in) + (emb_proj_dim * enc_emb_in)
 
         self.enc: EncoderType
         if ar_train or ar_val:
@@ -109,16 +106,11 @@ class CDModel(pl.LightningModule):
         # Decoder
         # ==============================
         self.dec_spk_in: Final[bool] = dec_spk_in
-
-        att_ctx_dim = (2 if att_spk_in else 0) + (emb_proj_dim if att_emb_in else 0)
-        dec_ctx_dim = (2 if dec_spk_in else 0) + (emb_proj_dim if dec_emb_in else 0)
-        lin_ctx_dim = emb_proj_dim if lin_emb_in else 0
-
         self.dec = DecoderCell(
             in_dim=enc_h_dim,
-            att_ctx_dim=att_ctx_dim,
-            ctx_dim=dec_ctx_dim,
-            lin_ctx_dim=lin_ctx_dim,
+            att_ctx_dim=(2 * att_spk_in) + (emb_proj_dim * att_emb_in),
+            dec_ctx_dim=(2 * dec_spk_in) + (emb_proj_dim * dec_emb_in),
+            lin_ctx_dim=emb_proj_dim * lin_emb_in,
             h_dim=dec_h_dim,
             num_layers=dec_layers,
             lin_num_layers=lin_num_layers,
@@ -127,14 +119,14 @@ class CDModel(pl.LightningModule):
 
     def forward(
         self,
-        features: Tensor,
+        f: Tensor,
         conv_lengths: Tensor,
-        speaker_designation: Tensor,
+        spk_rank: Tensor,
         segment_emb: Tensor | None,
         autoregressive: bool,
     ):
         # Pull some metadata from the inputs
-        (batch_size, num_steps, _), device = features.shape, features.device
+        (batch_size, num_steps, _), device = f.shape, f.device
 
         if self.use_emb and segment_emb is None:
             raise Exception(
@@ -148,49 +140,48 @@ class CDModel(pl.LightningModule):
 
         # Prepare various input data
         # ==============================
-        # Speaker designations, one-hot encoded for model input
-        speaker_designation_one_hot = F.one_hot(speaker_designation)[:, :, 1:]
+        spk_rank_one_hot = F.one_hot(spk_rank)[:, :, 1:]  # Speaker rank one-hot encoded
+        spk_is_primary = spk_rank == 1  # Identify primary speakers
 
         # History masks for timestep-level prediction
         # The dimensions of the tensors below are:
         #
         #   batch x prediction timesteps x dialogue history timesteps
-        speaker_designation_timesteps = speaker_designation[:, None, :-1]
-        history_mask = (
-            speaker_designation_timesteps != speaker_designation[:, 1:].unsqueeze(2)
-        ) & (speaker_designation_timesteps != 0)
+        hist_mask = (spk_rank[:, None, :-1] != spk_rank[:, 1:].unsqueeze(2)) & (
+            spk_rank[:, None, :-1] != 0
+        )
 
         # Prepare encoder inputs
         # ==============================
-        encoder_in_arr: list[Tensor] = [features]
+        enc_in_arr: list[Tensor] = [f]
         if self.enc_spk_in:
-            encoder_in_arr.append(speaker_designation_one_hot)
+            enc_in_arr.append(spk_rank_one_hot)
         if self.enc_emb_in and emb_proj is not None:
-            encoder_in_arr.append(emb_proj)
-        enc_in = torch.cat(encoder_in_arr, -1)
+            enc_in_arr.append(emb_proj)
+        enc_in = torch.cat(enc_in_arr, -1)
 
         # Prepare decoder inputs
         # ==============================
-        additional_att_in_arr: list[Tensor] = []
-        att_ctx: Tensor | None = None
+        att_ctx_arr: list[Tensor] = []
+        att_ctx: Tensor = torch.zeros(batch_size, num_steps, 0)
         if self.att_spk_in:
-            additional_att_in_arr.append(speaker_designation_one_hot[:, 1:])
+            att_ctx_arr.append(spk_rank_one_hot[:, 1:])
         if self.att_emb_in and emb_proj is not None:
-            additional_att_in_arr.append(emb_proj[:, 1:])
-        if len(additional_att_in_arr):
-            att_ctx = torch.concat(additional_att_in_arr, -1)
+            att_ctx_arr.append(emb_proj[:, 1:])
+        if len(att_ctx_arr):
+            att_ctx = torch.concat(att_ctx_arr, -1)
 
         dec_ctx_arr: list[Tensor] = []
-        dec_ctx: Tensor | None = None
+        dec_ctx: Tensor = torch.zeros(batch_size, num_steps, 0)
         if self.dec_spk_in:
-            dec_ctx_arr.append(speaker_designation_one_hot[:, 1:])
+            dec_ctx_arr.append(spk_rank_one_hot[:, 1:])
         if self.dec_emb_in and emb_proj is not None:
             dec_ctx_arr.append(emb_proj[:, 1:])
         if len(dec_ctx_arr):
             dec_ctx = torch.concat(dec_ctx_arr, -1)
 
         lin_ctx_arr: list[Tensor] = []
-        lin_ctx: Tensor | None = None
+        lin_ctx: Tensor = torch.zeros(batch_size, num_steps, 0)
         if self.lin_emb_in and emb_proj is not None:
             lin_ctx_arr.append(emb_proj[:, 1:])
         if len(lin_ctx_arr):
@@ -201,68 +192,63 @@ class CDModel(pl.LightningModule):
         enc_state = self.enc.init(input=enc_in, lengths=conv_lengths)
         dec_state = self.dec.init(batch_size=batch_size, device=device)
 
-        decoded_timesteps: list[Tensor] = []
-        weights_timesteps: list[Tensor] = []
+        y_hat_arr: list[Tensor] = []
+        w_arr: list[Tensor] = []
 
         enc_in_t: Tensor = enc_in[:, 0]
 
         # Loop through the conversation
         # ==============================
         for i in range(num_steps - 1):
-            # Encode the current inputs and retrieve the conversation history so far
-            history = self.enc(i=i, state=enc_state, input=enc_in_t)
+            hist = self.enc(i=i, state=enc_state, input=enc_in_t)
 
-            # Decode output features
-            dec_t, w_t = self.dec(
+            y_hat_t, w_t = self.dec(
                 state=dec_state,
-                input=history,
-                mask=history_mask[:, i, : i + 1],
-                att_ctx=(att_ctx[:, None, i] if att_ctx is not None else None),
-                dec_ctx=(dec_ctx[:, None, i] if dec_ctx is not None else None),
-                lin_ctx=(lin_ctx[:, None, i] if lin_ctx is not None else None),
+                input=hist,
+                mask=hist_mask[:, i, : i + 1],
+                att_ctx=att_ctx[:, None, i],
+                dec_ctx=dec_ctx[:, None, i],
+                lin_ctx=lin_ctx[:, None, i],
             )
 
-            decoded_timesteps.append(dec_t)
-            weights_timesteps.append(w_t)
+            y_hat_arr.append(y_hat_t)
+            w_arr.append(w_t)
 
             # Handle autoregressive training if enabled
             enc_in_t = enc_in[:, i + 1]
             if autoregressive:
-                speaker_is_primary_t = speaker_designation[:, i + 1] == 1
-                enc_in_t[speaker_is_primary_t, : len(self.feature_names)] = (
-                    dec_t.squeeze(1)[speaker_is_primary_t].detach().type(enc_in_t.dtype)
+                spk_is_primary_t = spk_is_primary[:, i + 1]
+                enc_in_t[spk_is_primary_t, : self.num_features] = (
+                    y_hat_t.squeeze(1)[spk_is_primary_t].detach().type(enc_in_t.dtype)
                 )
 
-        decoded = torch.concat(decoded_timesteps, dim=1)
+        y_hat = torch.concat(y_hat_arr, dim=1)
 
         # Batch, prediction timesteps, history, 1
         # TODO: Move this to decoder?
-        weights = torch.stack(
-            [
-                F.pad(x, (0, 0, 0, features.shape[1] - x.shape[1] - 1))
-                for x in weights_timesteps
-            ],
+        w = torch.stack(
+            [F.pad(x, (0, 0, 0, f.shape[1] - x.shape[1] - 1)) for x in w_arr],
             1,
         )
 
-        return decoded, weights
+        return y_hat, w
 
     def training_step(self, batch: ConversationBatch, batch_idx: int):
         batch_size: Final[int] = batch.features.shape[0]
 
         y_hat, weights = self(
-            features=batch.features,
+            f=batch.features,
             conv_lengths=batch.conv_lengths,
-            speaker_designation=batch.speaker_designation,
+            spk_rank=batch.speaker_rank,
             segment_emb=batch.segment_embeddings,
-            autoregressive=self.autoregressive_training,
+            autoregressive=self.ar_train,
         )
         y = batch.features[:, 1:]
 
         if self.train_primary_speaker_only:
-            mask = batch.speaker_designation[:, 1:] == 1
+            mask = batch.speaker_rank[:, 1:] == 1
         else:
-            mask = batch.speaker_designation[:, 1:] != 0
+            mask = batch.speaker_rank[:, 1:] != 0
 
         loss = F.mse_loss(y_hat[mask], y[mask])
 
@@ -281,18 +267,18 @@ class CDModel(pl.LightningModule):
         batch_size: Final[int] = batch.features.shape[0]
 
         y_hat, weights = self(
-            features=batch.features,
+            f=batch.features,
             conv_lengths=batch.conv_lengths,
-            speaker_designation=batch.speaker_designation,
+            spk_rank=batch.speaker_rank,
             segment_emb=batch.segment_embeddings,
-            autoregressive=self.autoregressive_validation,
+            autoregressive=self.ar_val,
         )
         y = batch.features[:, 1:]
 
         if self.train_primary_speaker_only:
-            mask = batch.speaker_designation[:, 1:] == 1
+            mask = batch.speaker_rank[:, 1:] == 1
         else:
-            mask = batch.speaker_designation[:, 1:] != 0
+            mask = batch.speaker_rank[:, 1:] != 0
 
         loss = F.mse_loss(y_hat[mask], y[mask])
 
@@ -308,15 +294,15 @@ class CDModel(pl.LightningModule):
         if self.global_rank == 0 and batch_idx == 0 and self.logger is not None:
             conv_length: int = int(batch.conv_lengths[0].item())
             w = weights[0, : conv_length - 1, :conv_length].squeeze().cpu().numpy()
-            sd = batch.speaker_designation[0, :conv_length].cpu().numpy()
+            sr = batch.speaker_rank[0, :conv_length].cpu().numpy()
             self.logger.experiment.add_figure(
                 "weights_1",
-                plot_weights(weights=w, speaker_designation=sd, speaker=1),
+                plot_weights(weights=w, spk_rank=sr, spk=1),
                 global_step=self.global_step,
             )
             self.logger.experiment.add_figure(
                 "weights_2",
-                plot_weights(weights=w, speaker_designation=sd, speaker=2),
+                plot_weights(weights=w, spk_rank=sr, spk=2),
                 global_step=self.global_step,
             )
 

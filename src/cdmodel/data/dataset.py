@@ -75,7 +75,7 @@ class ConversationDataset(Dataset):
 
         # Assign labels of 1 and 2 for primary and secondary speaker, respectively,
         # according to the selection criteria
-        speaker_side: Tensor = (
+        speaker_rank: Tensor = (
             torch.where(speaker_ids == speaker_ids[0], 1, 2)
             if primary_speaker_selection_method == "first"
             else torch.where(speaker_ids != speaker_ids[0], 1, 2)
@@ -85,7 +85,7 @@ class ConversationDataset(Dataset):
         if self.zero_pad:
             features = F.pad(features, (0, 0, 1, 0))
             speaker_ids = F.pad(speaker_ids, (1, 0))
-            speaker_side = F.pad(speaker_side, (1, 0))
+            speaker_rank = F.pad(speaker_rank, (1, 0))
 
             if segment_embeddings is not None:
                 segment_embeddings = F.pad(segment_embeddings, (0, 0, 1, 0))
@@ -94,6 +94,6 @@ class ConversationDataset(Dataset):
             features=features.unsqueeze(0),
             conv_lengths=torch.tensor([len(features)]),
             speaker_ids=speaker_ids.unsqueeze(0),
-            speaker_designation=speaker_side.unsqueeze(0),
+            speaker_rank=speaker_rank.unsqueeze(0),
             segment_embeddings=segment_embeddings,
         )

@@ -8,14 +8,14 @@ def collate_fn(batch: list[ConversationBatch]):
     features_all: list[Tensor] = []
     conv_lengths_all: list[Tensor] = []
     speaker_ids_all: list[Tensor] = []
-    speaker_side_all: list[Tensor] = []
+    speaker_rank_all: list[Tensor] = []
     segment_embeddings_all: list[Tensor] = []
 
     for b in batch:
         features_all.append(b.features.squeeze(0))
         conv_lengths_all.append(b.conv_lengths.squeeze(0))
         speaker_ids_all.append(b.speaker_ids.squeeze(0))
-        speaker_side_all.append(b.speaker_designation.squeeze(0))
+        speaker_rank_all.append(b.speaker_rank.squeeze(0))
 
         if b.segment_embeddings is not None:
             segment_embeddings_all.append(b.segment_embeddings.squeeze(0))
@@ -30,8 +30,6 @@ def collate_fn(batch: list[ConversationBatch]):
         features=nn.utils.rnn.pad_sequence(features_all, batch_first=True),
         conv_lengths=torch.stack(conv_lengths_all),
         speaker_ids=nn.utils.rnn.pad_sequence(speaker_ids_all, batch_first=True),
-        speaker_designation=nn.utils.rnn.pad_sequence(
-            speaker_side_all, batch_first=True
-        ),
+        speaker_rank=nn.utils.rnn.pad_sequence(speaker_rank_all, batch_first=True),
         segment_embeddings=segment_embeddings,
     )

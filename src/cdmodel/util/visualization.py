@@ -5,14 +5,14 @@ import matplotlib.pyplot as plt
 
 def plot_weights(
     weights: ArrayLike,
-    speaker_designation: ArrayLike,
-    speaker: int,
+    spk_rank: ArrayLike,
+    spk: int,
 ):
     fig, ax = plt.subplots(figsize=(10, 10))
     fig.set_tight_layout(True),
 
-    timestep_mask = speaker_designation[1:] == speaker
-    history_mask = (speaker_designation != speaker) | (speaker_designation == 0)
+    timestep_mask = spk_rank[1:] == spk
+    history_mask = (spk_rank != spk) | (spk_rank == 0)
 
     weights = weights[timestep_mask]
     weights = np.array([x[history_mask] for x in np.unstack(weights, axis=0)])
