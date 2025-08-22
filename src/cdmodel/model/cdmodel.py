@@ -13,6 +13,10 @@ from cdmodel.util.visualization import plot_weights
 AttentionMaskingStrategy = Literal["partner"] | Literal["primary"]
 
 
+def _concat_or_zero(lst: list[Tensor], b, steps, dim: int = -1):
+    return torch.concat(lst, dim) if len(lst) else torch.zeros(b, steps, 0)
+
+
 class CDModel(pl.LightningModule):
     def __init__(
         self,
@@ -150,8 +154,8 @@ class CDModel(pl.LightningModule):
             enc_in_arr.append(spk_rank_one_hot)
         if self.enc_emb_in and emb_proj is not None:
             enc_in_arr.append(emb_proj)
-        enc_in = torch.cat(enc_in_arr, -1)
-        enc_in_t_arr = enc_in.unbind(1)
+        enc_in = torch.concat(enc_in_arr, -1)
+        enc_in_t_arr = enc_in.split(1, 1)
 
         # Prepare decoder inputs
         # ==============================
@@ -161,27 +165,23 @@ class CDModel(pl.LightningModule):
             att_ctx_arr.append(spk_rank_one_hot[:, 1:])
         if self.att_emb_in and emb_proj is not None:
             att_ctx_arr.append(emb_proj[:, 1:])
-        if len(att_ctx_arr):
-            att_ctx = torch.concat(att_ctx_arr, -1)
+        att_ctx = _concat_or_zero(lst=att_ctx_arr, b=batch_size, steps=num_steps)
         att_ctx_t_arr = att_ctx.unbind(1)
 
         dec_ctx_arr: list[Tensor] = []
-        dec_ctx: Tensor = torch.zeros(batch_size, num_steps, 0)
         if self.dec_spk_in:
             dec_ctx_arr.append(spk_rank_one_hot[:, 1:])
         if self.dec_emb_in and emb_proj is not None:
             dec_ctx_arr.append(emb_proj[:, 1:])
-        if len(dec_ctx_arr):
-            dec_ctx = torch.concat(dec_ctx_arr, -1)
-        dec_ctx_t_arr = dec_ctx.unbind(1)
+        dec_ctx = _concat_or_zero(lst=dec_ctx_arr, b=batch_size, steps=num_steps)
+        dec_ctx_t_arr = dec_ctx.split(1, 1)
 
         lin_ctx_arr: list[Tensor] = []
         lin_ctx: Tensor = torch.zeros(batch_size, num_steps, 0)
         if self.lin_emb_in and emb_proj is not None:
             lin_ctx_arr.append(emb_proj[:, 1:])
-        if len(lin_ctx_arr):
-            lin_ctx = torch.concat(lin_ctx_arr, -1)
-        lin_ctx_t_arr = lin_ctx.unbind(1)
+        lin_ctx = _concat_or_zero(lst=lin_ctx_arr, b=batch_size, steps=num_steps)
+        lin_ctx_t_arr = lin_ctx.split(1, 1)
 
         # Get state objects for the encoder and decoder
         # ==============================
@@ -194,21 +194,19 @@ class CDModel(pl.LightningModule):
         # At each conv_timestep, the tensor contains an attention
         # mask that hides irrelevant historical turns from the
         # attention mechanism.
+        spk_rank_hist = spk_rank[:, None, :-1]
+        spk_rank_pred = spk_rank[:, 1:, None]
         if self.att_mask_strategy == "partner":
-            hist_mask = (
-                (spk_rank[:, None, :-1] != spk_rank[:, 1:].unsqueeze(2))
-                & (spk_rank[:, None, :-1] != 0)
-            ).tril()
+            spk_rank_cond = spk_rank_hist != 0
         elif self.att_mask_strategy == "primary":
-            hist_mask = (
-                (spk_rank[:, None, :-1] != spk_rank[:, 1:].unsqueeze(2))
-                & (spk_rank[:, None, :-1] == 1)
-            ).tril()
+            spk_rank_cond = spk_rank_hist == 2
         else:
             raise ValueError(
-                f"Unknown attention masking strategy {self.att_mask_strategy}"
+                f"Unknown attention mask strategy {self.att_mask_strategy}"
             )
-        hist_mask_t_arr = hist_mask.unbind(1)
+        hist_mask_t_arr = (
+            ((spk_rank_hist != spk_rank_pred) & spk_rank_cond).tril().unbind(1)
+        )
 
         y_hat_arr: list[Tensor] = []
         w_arr: list[Tensor] = []
@@ -223,9 +221,9 @@ class CDModel(pl.LightningModule):
                 input=hist,
                 h=dec_h,
                 mask=hist_mask_t_arr[i],
-                att_ctx=att_ctx_t_arr[i].unsqueeze(1),
-                dec_ctx=dec_ctx_t_arr[i].unsqueeze(1),
-                lin_ctx=lin_ctx_t_arr[i].unsqueeze(1),
+                att_ctx=att_ctx_t_arr[i],
+                dec_ctx=dec_ctx_t_arr[i],
+                lin_ctx=lin_ctx_t_arr[i],
             )
 
             y_hat_arr.append(y_hat_t)
@@ -235,9 +233,9 @@ class CDModel(pl.LightningModule):
             enc_in_t = enc_in_t_arr[i + 1]
             if autoregressive:
                 spk_is_primary_t = spk_is_primary_t_arr[i + 1]
-                enc_in_t[spk_is_primary_t, : self.num_features] = (
-                    y_hat_t.squeeze(1)[spk_is_primary_t].detach().type(enc_in_t.dtype)
-                )
+                enc_in_t[spk_is_primary_t, :, : self.num_features] = y_hat_t.detach()[
+                    spk_is_primary_t
+                ].type(enc_in_t.dtype)
 
         y_hat = torch.concat(y_hat_arr, dim=1)
 

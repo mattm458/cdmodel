@@ -54,7 +54,7 @@ class DecoderCell(nn.Module):
 
         q = h.permute(1, 0, 2).reshape(batch_size, -1)
         x, weights = self.attention(
-            query=torch.concat([q, att_ctx.squeeze(1)], -1), keys=input, mask=mask
+            query=torch.concat([q, att_ctx], -1), keys=input, mask=mask
         )
 
         x, h = self.rnn(torch.concat([x, dec_ctx], dim=-1), h)

@@ -63,7 +63,7 @@ class EncoderCell(EncoderType):
     def forward(
         self, i: int, history: Tensor, h: Tensor, input: Tensor
     ) -> tuple[Tensor, Tensor]:
-        x, h = self.rnn(input.unsqueeze(1), h)
+        x, h = self.rnn(input, h)
         return (
             history.index_copy(
                 1, torch.tensor([i], device=history.device), x.type(history.dtype)
