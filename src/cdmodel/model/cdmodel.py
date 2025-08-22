@@ -10,7 +10,7 @@ from cdmodel.model.components.decoder import DecoderCell
 from cdmodel.model.components.encoder import Encoder, EncoderCell, EncoderType
 from cdmodel.util.visualization import plot_weights
 
-AttentionMaskingStrategy = Literal["partner"] | Literal["primary"]
+AttentionMaskingStrategy = Literal["partner"] | Literal["secondary"]
 
 
 def _concat_or_zero(lst: list[Tensor], b, steps, dim: int = -1):
@@ -194,27 +194,26 @@ class CDModel(pl.LightningModule):
         # At each conv_timestep, the tensor contains an attention
         # mask that hides irrelevant historical turns from the
         # attention mechanism.
+        # TODO: Test this
         spk_rank_hist = spk_rank[:, None, :-1]
         spk_rank_pred = spk_rank[:, 1:, None]
         if self.att_mask_strategy == "partner":
-            spk_rank_cond = spk_rank_hist != 0
-        elif self.att_mask_strategy == "primary":
-            spk_rank_cond = spk_rank_hist == 2
+            spk_rank_cond = (spk_rank_hist != spk_rank_pred) & (spk_rank_hist != 0)
+        elif self.att_mask_strategy == "secondary":
+            # TODO: This doesn't work, fix pls
+            spk_rank_cond = (spk_rank_hist != spk_rank_pred) & (spk_rank_hist != 0)
         else:
             raise ValueError(
                 f"Unknown attention mask strategy {self.att_mask_strategy}"
             )
-        hist_mask_t_arr = (
-            ((spk_rank_hist != spk_rank_pred) & spk_rank_cond).tril().unbind(1)
-        )
+        hist_mask_t_arr = spk_rank_cond.tril().unbind(1)
 
-        y_hat_arr: list[Tensor] = []
+        y_hat = torch.zeros(batch_size, num_steps - 1, self.num_features, device=device)
         w_arr: list[Tensor] = []
-
-        enc_in_t: Tensor = enc_in_t_arr[0]
 
         # Loop through the conversation
         # ==============================
+        enc_in_t: Tensor = enc_in_t_arr[0]
         for i in range(num_steps - 1):
             hist, enc_h = self.enc(i=i, history=hist, h=enc_h, input=enc_in_t)
             y_hat_t, dec_h, w_t = self.dec(
@@ -226,7 +225,7 @@ class CDModel(pl.LightningModule):
                 lin_ctx=lin_ctx_t_arr[i],
             )
 
-            y_hat_arr.append(y_hat_t)
+            y_hat[:, i] = y_hat_t.squeeze(1)
             w_arr.append(w_t)
 
             # Handle autoregressive training if enabled
@@ -236,8 +235,6 @@ class CDModel(pl.LightningModule):
                 enc_in_t[spk_is_primary_t, :, : self.num_features] = y_hat_t.detach()[
                     spk_is_primary_t
                 ].type(enc_in_t.dtype)
-
-        y_hat = torch.concat(y_hat_arr, dim=1)
 
         # Batch, prediction timesteps, history, 1
         # TODO: Move this to decoder?
