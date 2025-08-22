@@ -1,4 +1,4 @@
-from typing import Final
+from typing import Final, Literal
 
 import torch
 from lightning import pytorch as pl
@@ -9,6 +9,8 @@ from cdmodel.common.data import ConversationBatch
 from cdmodel.model.components.decoder import DecoderCell
 from cdmodel.model.components.encoder import Encoder, EncoderCell, EncoderType
 from cdmodel.util.visualization import plot_weights
+
+AttentionMaskingStrategy = Literal["partner"] | Literal["primary"]
 
 
 class CDModel(pl.LightningModule):
@@ -23,11 +25,12 @@ class CDModel(pl.LightningModule):
         enc_emb_in: bool,
         att_emb_in: bool,
         att_spk_in: bool,
+        att_mask_strategy: AttentionMaskingStrategy,
         dec_h_dim: int,
         dec_layers: int,
         dec_emb_in: bool,
         dec_spk_in: bool,
-        lin_num_layers: int,
+        lin_layers: int,
         lin_emb_in: bool,
         ar_train: bool,
         ar_val: bool,
@@ -40,6 +43,8 @@ class CDModel(pl.LightningModule):
         self.num_features: Final[int] = len(feature_names)
         self.ar_train: Final[bool] = ar_train
         self.ar_val: Final[bool] = ar_val
+
+        self.att_mask_strategy: Final[AttentionMaskingStrategy] = att_mask_strategy
 
         self.emb_style: Final[str | None] = emb_style
         self.enc_emb_in: Final[bool] = enc_emb_in
@@ -54,7 +59,7 @@ class CDModel(pl.LightningModule):
         # ==============================
         self.use_emb: Final[bool] = emb_style is not None
 
-        self.emb_proj: nn.Module | None = None
+        self.emb_proj: nn.Module = nn.Identity()
         if self.use_emb:
             if emb_dim == 0:
                 raise ValueError(
@@ -65,7 +70,6 @@ class CDModel(pl.LightningModule):
                     "Embeddings are enabled, but they are not given as input to any component"
                 )
 
-            self.emb_proj = nn.Identity()
             if emb_proj:
                 self.emb_proj = nn.Sequential(
                     nn.Linear(emb_dim, emb_proj_dim), nn.Tanh()
@@ -92,15 +96,11 @@ class CDModel(pl.LightningModule):
         self.enc: EncoderType
         if ar_train or ar_val:
             self.enc = EncoderCell(
-                input_dim=enc_in_dim,
-                hidden_dim=enc_h_dim,
-                num_layers=enc_layers,
+                input_dim=enc_in_dim, hidden_dim=enc_h_dim, num_layers=enc_layers
             )
         else:
             self.enc = Encoder(
-                input_dim=enc_in_dim,
-                hidden_dim=enc_h_dim,
-                num_layers=enc_layers,
+                input_dim=enc_in_dim, hidden_dim=enc_h_dim, num_layers=enc_layers
             )
 
         # Decoder
@@ -113,7 +113,7 @@ class CDModel(pl.LightningModule):
             lin_ctx_dim=emb_proj_dim * lin_emb_in,
             h_dim=dec_h_dim,
             num_layers=dec_layers,
-            lin_num_layers=lin_num_layers,
+            lin_num_layers=lin_layers,
             features=feature_names,
         )
 
@@ -141,7 +141,7 @@ class CDModel(pl.LightningModule):
         # Prepare various input data
         # ==============================
         spk_rank_one_hot = F.one_hot(spk_rank)[:, :, 1:]  # Speaker rank one-hot encoded
-        spk_is_primary = spk_rank == 1  # Identify primary speakers
+        spk_is_primary_t_arr = (spk_rank == 1).unbind(1)  # Identify primary speakers
 
         # Prepare encoder inputs
         # ==============================
@@ -151,6 +151,7 @@ class CDModel(pl.LightningModule):
         if self.enc_emb_in and emb_proj is not None:
             enc_in_arr.append(emb_proj)
         enc_in = torch.cat(enc_in_arr, -1)
+        enc_in_t_arr = enc_in.unbind(1)
 
         # Prepare decoder inputs
         # ==============================
@@ -162,6 +163,7 @@ class CDModel(pl.LightningModule):
             att_ctx_arr.append(emb_proj[:, 1:])
         if len(att_ctx_arr):
             att_ctx = torch.concat(att_ctx_arr, -1)
+        att_ctx_t_arr = att_ctx.unbind(1)
 
         dec_ctx_arr: list[Tensor] = []
         dec_ctx: Tensor = torch.zeros(batch_size, num_steps, 0)
@@ -171,6 +173,7 @@ class CDModel(pl.LightningModule):
             dec_ctx_arr.append(emb_proj[:, 1:])
         if len(dec_ctx_arr):
             dec_ctx = torch.concat(dec_ctx_arr, -1)
+        dec_ctx_t_arr = dec_ctx.unbind(1)
 
         lin_ctx_arr: list[Tensor] = []
         lin_ctx: Tensor = torch.zeros(batch_size, num_steps, 0)
@@ -178,20 +181,39 @@ class CDModel(pl.LightningModule):
             lin_ctx_arr.append(emb_proj[:, 1:])
         if len(lin_ctx_arr):
             lin_ctx = torch.concat(lin_ctx_arr, -1)
+        lin_ctx_t_arr = lin_ctx.unbind(1)
 
         # Get state objects for the encoder and decoder
         # ==============================
         hist, enc_h = self.enc.init(input=enc_in, lengths=conv_lengths)
-        hist_mask = (
-            (spk_rank[:, None, :-1] != spk_rank[:, 1:].unsqueeze(2))
-            & (spk_rank[:, None, :-1] != 0)
-        ).tril()
         dec_h = self.dec.init(batch_size=batch_size, device=device)
+
+        # Create the history mask.
+        # The history mask tensor has the following dimensions:
+        #   [batch, conv_timestep, hist_timestep]
+        # At each conv_timestep, the tensor contains an attention
+        # mask that hides irrelevant historical turns from the
+        # attention mechanism.
+        if self.att_mask_strategy == "partner":
+            hist_mask = (
+                (spk_rank[:, None, :-1] != spk_rank[:, 1:].unsqueeze(2))
+                & (spk_rank[:, None, :-1] != 0)
+            ).tril()
+        elif self.att_mask_strategy == "primary":
+            hist_mask = (
+                (spk_rank[:, None, :-1] != spk_rank[:, 1:].unsqueeze(2))
+                & (spk_rank[:, None, :-1] == 1)
+            ).tril()
+        else:
+            raise ValueError(
+                f"Unknown attention masking strategy {self.att_mask_strategy}"
+            )
+        hist_mask_t_arr = hist_mask.unbind(1)
 
         y_hat_arr: list[Tensor] = []
         w_arr: list[Tensor] = []
 
-        enc_in_t: Tensor = enc_in[:, 0]
+        enc_in_t: Tensor = enc_in_t_arr[0]
 
         # Loop through the conversation
         # ==============================
@@ -200,19 +222,19 @@ class CDModel(pl.LightningModule):
             y_hat_t, dec_h, w_t = self.dec(
                 input=hist,
                 h=dec_h,
-                mask=hist_mask[:, i],
-                att_ctx=att_ctx[:, None, i],
-                dec_ctx=dec_ctx[:, None, i],
-                lin_ctx=lin_ctx[:, None, i],
+                mask=hist_mask_t_arr[i],
+                att_ctx=att_ctx_t_arr[i].unsqueeze(1),
+                dec_ctx=dec_ctx_t_arr[i].unsqueeze(1),
+                lin_ctx=lin_ctx_t_arr[i].unsqueeze(1),
             )
 
             y_hat_arr.append(y_hat_t)
             w_arr.append(w_t)
 
             # Handle autoregressive training if enabled
-            enc_in_t = enc_in[:, i + 1]
+            enc_in_t = enc_in_t_arr[i + 1]
             if autoregressive:
-                spk_is_primary_t = spk_is_primary[:, i + 1]
+                spk_is_primary_t = spk_is_primary_t_arr[i + 1]
                 enc_in_t[spk_is_primary_t, : self.num_features] = (
                     y_hat_t.squeeze(1)[spk_is_primary_t].detach().type(enc_in_t.dtype)
                 )
@@ -222,8 +244,7 @@ class CDModel(pl.LightningModule):
         # Batch, prediction timesteps, history, 1
         # TODO: Move this to decoder?
         w = torch.stack(
-            [F.pad(x, (0, 0, 0, f.shape[1] - x.shape[1] - 1)) for x in w_arr],
-            1,
+            [F.pad(x, (0, 0, 0, f.shape[1] - x.shape[1] - 1)) for x in w_arr], 1
         )
 
         return y_hat, w

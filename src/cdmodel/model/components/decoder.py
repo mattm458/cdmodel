@@ -24,14 +24,10 @@ class DecoderCell(nn.Module):
         self.num_layers: Final[int] = num_layers
 
         self.attention = AdditiveAttention(
-            hidden_dim=in_dim,
-            query_dim=(h_dim * num_layers) + att_ctx_dim,
+            hidden_dim=in_dim, query_dim=(h_dim * num_layers) + att_ctx_dim
         )
         self.rnn = nn.GRU(
-            in_dim + dec_ctx_dim,
-            h_dim,
-            num_layers=num_layers,
-            batch_first=True,
+            in_dim + dec_ctx_dim, h_dim, num_layers=num_layers, batch_first=True
         )
 
         linear_dim = in_dim + lin_ctx_dim
@@ -58,10 +54,10 @@ class DecoderCell(nn.Module):
 
         q = h.permute(1, 0, 2).reshape(batch_size, -1)
         x, weights = self.attention(
-            query=torch.cat([q, att_ctx.squeeze(1)], -1), keys=input, mask=mask
+            query=torch.concat([q, att_ctx.squeeze(1)], -1), keys=input, mask=mask
         )
 
         x, h = self.rnn(torch.concat([x, dec_ctx], dim=-1), h)
-        outputs = self.linear(torch.cat([x, lin_ctx], -1))
+        outputs = self.linear(torch.concat([x, lin_ctx], -1))
 
         return outputs, h, weights
