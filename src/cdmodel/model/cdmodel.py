@@ -7,6 +7,7 @@ from torch.nn import functional as F
 
 from cdmodel.common.data import ConversationBatch
 from cdmodel.model.components.decoder import DecoderCell
+from cdmodel.model.components.embeddings_encoder import EmbeddingsEncoder
 from cdmodel.model.components.encoder import Encoder, EncoderCell, EncoderType
 from cdmodel.util.visualization import plot_weights
 
@@ -61,32 +62,18 @@ class CDModel(pl.LightningModule):
 
         # Embeddings
         # ==============================
-        self.use_emb: Final[bool] = emb_style is not None
-
-        self.emb_proj: nn.Module = nn.Identity()
-        if self.use_emb:
-            if emb_dim == 0:
-                raise ValueError(
-                    "emb_dim must be specified when embeddings are enabled."
-                )
+        self.emb_enc = EmbeddingsEncoder(
+            emb_style=emb_style,
+            emb_proj=emb_proj,
+            emb_dim=emb_dim,
+            emb_proj_dim=emb_proj_dim,
+        )
+        if self.emb_enc.enabled:
             if not enc_emb_in and not att_emb_in and not dec_emb_in and not lin_emb_in:
                 raise Exception(
                     "Embeddings are enabled, but they are not given as input to any component"
                 )
-
-            if emb_proj:
-                self.emb_proj = nn.Sequential(
-                    nn.Linear(emb_dim, emb_proj_dim), nn.Tanh()
-                )
-            else:
-                if emb_proj_dim != 0 and emb_proj_dim != emb_dim:
-                    raise ValueError(
-                        "If emb_proj is False, emb_proj_dim must equal emb_dim."
-                    )
-                emb_proj_dim = emb_proj_dim or emb_dim
         else:
-            if emb_proj:
-                raise ValueError("emb_proj is True, but embeddings are disabled.")
             if enc_emb_in or att_emb_in or dec_emb_in or lin_emb_in:
                 raise Exception(
                     "Embeddings are configured as model component inputs, but embeddings are disabled."
@@ -132,15 +119,8 @@ class CDModel(pl.LightningModule):
         # Pull some metadata from the inputs
         (batch_size, num_steps, _), device = f.shape, f.device
 
-        if self.use_emb and segment_emb is None:
-            raise Exception(
-                "Embeddings are active, but no embeddings were given as input"
-            )
-
         # Prepare embeddings
-        emb_proj: Tensor | None = None
-        if self.use_emb and self.emb_proj:
-            emb_proj = self.emb_proj(segment_emb)
+        emb_proj: Tensor | None = self.emb_enc(embeddings=segment_emb)
 
         # Prepare various input data
         # ==============================
