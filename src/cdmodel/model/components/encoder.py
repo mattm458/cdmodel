@@ -10,6 +10,12 @@ class EncoderType(nn.Module, ABC):
     def init(self, input: Tensor, lengths: Tensor) -> tuple[Tensor, Tensor]:
         pass
 
+    @abstractmethod
+    def forward(
+        self, i: int, history: Tensor, h: Tensor, input: Tensor
+    ) -> tuple[Tensor, Tensor]:
+        pass
+
 
 class Encoder(EncoderType):
     def __init__(self, input_dim: int, hidden_dim: int, num_layers: int):
@@ -21,7 +27,10 @@ class Encoder(EncoderType):
 
     def init(self, input: Tensor, lengths: Tensor) -> tuple[Tensor, Tensor]:
         x = nn.utils.rnn.pack_padded_sequence(
-            input=input, lengths=lengths.cpu(), batch_first=True, enforce_sorted=False
+            input=input[:, :-1],
+            lengths=lengths.cpu() - 1,
+            batch_first=True,
+            enforce_sorted=False,
         )
         x, h = self.rnn(x)
         history, _ = nn.utils.rnn.pad_packed_sequence(x, batch_first=True)
