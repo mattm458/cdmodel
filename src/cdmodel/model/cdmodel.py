@@ -132,8 +132,6 @@ class CDModel(pl.LightningModule):
         spk_rank_one_hot = F.one_hot(spk_rank)[:, :, 1:]  # Speaker rank one-hot encoded
         spk_is_primary_t_arr = (spk_rank == 1).unbind(1)  # Identify primary speakers
 
-        emb_proj_next = emb_proj[:, 1:]
-
         # Prepare encoder inputs
         # ==============================
         enc_in = _append_context(
@@ -147,19 +145,19 @@ class CDModel(pl.LightningModule):
         # Prepare decoder inputs
         # ==============================
         att_ctx_t_arr = _append_context(
-            tensors=[spk_rank_one_hot[:, 1:], emb_proj_next],
+            tensors=[spk_rank_one_hot[:, 1:], emb_proj[:, 1:]],
             cond=[self.att_spk_in, self.att_emb_in],
             b=batch_size,
             n=num_steps,
         ).unbind(1)
         dec_ctx_t_arr = _append_context(
-            tensors=[spk_rank_one_hot[:, 1:], emb_proj_next],
+            tensors=[spk_rank_one_hot[:, 1:], emb_proj[:, 1:]],
             cond=[self.dec_spk_in, self.dec_emb_in],
             b=batch_size,
             n=num_steps,
         ).split(1, 1)
         lin_ctx_t_arr = _append_context(
-            tensors=[emb_proj_next], cond=[self.lin_emb_in], b=batch_size, n=num_steps
+            tensors=[emb_proj[:, 1:]], cond=[self.lin_emb_in], b=batch_size, n=num_steps
         ).split(1, 1)
 
         # Get state objects for the encoder and decoder
