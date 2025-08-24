@@ -14,8 +14,11 @@ from cdmodel.util.visualization import plot_weights
 AttentionMaskingStrategy = Literal["partner"] | Literal["secondary"]
 
 
-def _concat_or_zero(lst: list[Tensor], b, steps, dim: int = -1):
-    return torch.concat(lst, dim) if len(lst) else torch.zeros(b, steps, 0)
+def _append_context(tensors: list[Tensor | None], cond: list[bool], b: int, n: int):
+    lst = [t for (t, c) in zip(tensors, cond) if c and t is not None]
+    if len(lst) == 0:
+        return torch.zeros(b, n, 0)
+    return torch.concat(lst, -1)
 
 
 class CDModel(pl.LightningModule):
@@ -120,48 +123,44 @@ class CDModel(pl.LightningModule):
         (batch_size, num_steps, _), device = f.shape, f.device
 
         # Prepare embeddings
-        emb_proj: Tensor | None = self.emb_enc(embeddings=segment_emb)
+        emb_proj: Tensor = self.emb_enc(
+            emb=segment_emb, b=batch_size, n=num_steps, device=device
+        )
 
         # Prepare various input data
         # ==============================
         spk_rank_one_hot = F.one_hot(spk_rank)[:, :, 1:]  # Speaker rank one-hot encoded
         spk_is_primary_t_arr = (spk_rank == 1).unbind(1)  # Identify primary speakers
 
+        emb_proj_next = emb_proj[:, 1:]
+
         # Prepare encoder inputs
         # ==============================
-        enc_in_arr: list[Tensor] = [f]
-        if self.enc_spk_in:
-            enc_in_arr.append(spk_rank_one_hot)
-        if self.enc_emb_in and emb_proj is not None:
-            enc_in_arr.append(emb_proj)
-        enc_in = torch.concat(enc_in_arr, -1)
+        enc_in = _append_context(
+            tensors=[f, spk_rank_one_hot, emb_proj],
+            cond=[True, self.enc_spk_in, self.enc_emb_in],
+            b=batch_size,
+            n=num_steps,
+        )
         enc_in_t_arr = enc_in.split(1, 1)
 
         # Prepare decoder inputs
         # ==============================
-        att_ctx_arr: list[Tensor] = []
-        att_ctx: Tensor = torch.zeros(batch_size, num_steps, 0)
-        if self.att_spk_in:
-            att_ctx_arr.append(spk_rank_one_hot[:, 1:])
-        if self.att_emb_in and emb_proj is not None:
-            att_ctx_arr.append(emb_proj[:, 1:])
-        att_ctx = _concat_or_zero(lst=att_ctx_arr, b=batch_size, steps=num_steps)
-        att_ctx_t_arr = att_ctx.unbind(1)
-
-        dec_ctx_arr: list[Tensor] = []
-        if self.dec_spk_in:
-            dec_ctx_arr.append(spk_rank_one_hot[:, 1:])
-        if self.dec_emb_in and emb_proj is not None:
-            dec_ctx_arr.append(emb_proj[:, 1:])
-        dec_ctx = _concat_or_zero(lst=dec_ctx_arr, b=batch_size, steps=num_steps)
-        dec_ctx_t_arr = dec_ctx.split(1, 1)
-
-        lin_ctx_arr: list[Tensor] = []
-        lin_ctx: Tensor = torch.zeros(batch_size, num_steps, 0)
-        if self.lin_emb_in and emb_proj is not None:
-            lin_ctx_arr.append(emb_proj[:, 1:])
-        lin_ctx = _concat_or_zero(lst=lin_ctx_arr, b=batch_size, steps=num_steps)
-        lin_ctx_t_arr = lin_ctx.split(1, 1)
+        att_ctx_t_arr = _append_context(
+            tensors=[spk_rank_one_hot[:, 1:], emb_proj_next],
+            cond=[self.att_spk_in, self.att_emb_in],
+            b=batch_size,
+            n=num_steps,
+        ).unbind(1)
+        dec_ctx_t_arr = _append_context(
+            tensors=[spk_rank_one_hot[:, 1:], emb_proj_next],
+            cond=[self.dec_spk_in, self.dec_emb_in],
+            b=batch_size,
+            n=num_steps,
+        ).split(1, 1)
+        lin_ctx_t_arr = _append_context(
+            tensors=[emb_proj_next], cond=[self.lin_emb_in], b=batch_size, n=num_steps
+        ).split(1, 1)
 
         # Get state objects for the encoder and decoder
         # ==============================

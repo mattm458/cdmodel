@@ -34,12 +34,9 @@ class EmbeddingsEncoder(nn.Module):
                 raise ValueError("emb_proj is True, but embeddings are disabled.")
 
     def forward(
-        self, embeddings: Tensor | None, embeddings_len: Tensor | None = None
-    ) -> Tensor | None:
-        if not self.enabled:
-            return None
+        self, emb: Tensor | None, b: int, n: int, device, emb_len: Tensor | None = None
+    ) -> Tensor:
+        if not self.enabled or emb is None:
+            return torch.zeros(b, n, 0, device=device)
 
-        if embeddings is None:
-            return None
-
-        return self.emb_proj(embeddings)
+        return self.emb_proj(emb)
