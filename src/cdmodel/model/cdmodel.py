@@ -39,6 +39,7 @@ class CDModel(pl.LightningModule):
         dec_emb_in: bool,
         dec_spk_in: bool,
         lin_layers: int,
+        lin_h_dim: int,
         lin_emb_in: bool,
         ar_train: bool,
         ar_val: bool,
@@ -108,6 +109,7 @@ class CDModel(pl.LightningModule):
             h_dim=dec_h_dim,
             num_layers=dec_layers,
             lin_num_layers=lin_layers,
+            lin_h_dim=lin_h_dim,
             features=feature_names,
         )
 

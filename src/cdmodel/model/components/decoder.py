@@ -16,6 +16,7 @@ class DecoderCell(nn.Module):
         h_dim: int,
         num_layers: int,
         lin_num_layers: int,
+        lin_h_dim: int,
         features: list[str],
     ):
         super().__init__()
@@ -30,13 +31,30 @@ class DecoderCell(nn.Module):
             in_dim + dec_ctx_dim, h_dim, num_layers=num_layers, batch_first=True
         )
 
-        linear_dim = in_dim + lin_ctx_dim
-        self.linear = nn.Sequential(
-            *(
-                ([nn.Linear(linear_dim, linear_dim), nn.ReLU()] * (lin_num_layers - 1))
-                + [nn.Linear(linear_dim, len(features))]
+        linear_input_dim = in_dim + lin_ctx_dim
+        if lin_num_layers < 1:
+            raise ValueError("lin_num_layers must be greater than 0")
+        elif lin_num_layers == 1:
+            if lin_h_dim != 0:
+                raise ValueError("if lin_num_layers is 1, lin_h_dim must be 0")
+            self.linear = nn.Sequential(nn.Linear(linear_input_dim, len(features)))
+        elif lin_num_layers == 2:
+            self.linear = nn.Sequential(
+                nn.Linear(linear_input_dim, lin_h_dim),
+                nn.ReLU(),
+                nn.Linear(lin_h_dim, len(features)),
             )
-        )
+        else:
+            self.linear = nn.Sequential(
+                *(
+                    [nn.Linear(linear_input_dim, lin_h_dim), nn.ReLU()]
+                    + (
+                        [nn.Linear(lin_h_dim, lin_h_dim), nn.ReLU()]
+                        * (lin_num_layers - 2)
+                    )
+                    + [nn.Linear(lin_h_dim, len(features))]
+                )
+            )
 
     def init(self, batch_size: int, device) -> Tensor:
         return torch.zeros(self.num_layers, batch_size, self.hidden_size, device=device)
