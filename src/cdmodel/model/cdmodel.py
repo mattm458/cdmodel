@@ -14,10 +14,12 @@ from cdmodel.util.visualization import plot_weights
 AttentionMaskingStrategy = Literal["partner"] | Literal["both"]
 
 
-def _append_context(tensors: list[Tensor | None], cond: list[bool], b: int, n: int):
+def _append_context(
+    tensors: list[Tensor | None], cond: list[bool], b: int, n: int, device
+):
     lst = [t for (t, c) in zip(tensors, cond) if c and t is not None]
     if len(lst) == 0:
-        return torch.zeros(b, n, 0)
+        return torch.zeros(b, n, 0, device=device)
     return torch.concat(lst, -1)
 
 
@@ -48,6 +50,7 @@ class CDModel(pl.LightningModule):
         emb_proj_dim: int = 0,
     ):
         super().__init__()
+        self.save_hyperparameters()
 
         self.num_features: Final[int] = len(feature_names)
         self.ar_train: Final[bool] = ar_train
@@ -141,6 +144,7 @@ class CDModel(pl.LightningModule):
             cond=[True, self.enc_spk_in, self.enc_emb_in],
             b=batch_size,
             n=num_steps,
+            device=f.device,
         )
 
         # Prepare decoder inputs
@@ -150,15 +154,21 @@ class CDModel(pl.LightningModule):
             cond=[self.att_spk_in, self.att_emb_in],
             b=batch_size,
             n=num_steps,
+            device=f.device,
         ).unbind(1)
         dec_ctx_t_arr = _append_context(
             tensors=[spk_rank_one_hot[:, 1:], emb_proj[:, 1:]],
             cond=[self.dec_spk_in, self.dec_emb_in],
             b=batch_size,
             n=num_steps,
+            device=f.device,
         ).split(1, 1)
         lin_ctx_t_arr = _append_context(
-            tensors=[emb_proj[:, 1:]], cond=[self.lin_emb_in], b=batch_size, n=num_steps
+            tensors=[emb_proj[:, 1:]],
+            cond=[self.lin_emb_in],
+            b=batch_size,
+            n=num_steps,
+            device=f.device,
         ).split(1, 1)
 
         # Get state objects for the encoder and decoder
