@@ -142,7 +142,6 @@ class CDModel(pl.LightningModule):
             b=batch_size,
             n=num_steps,
         )
-        enc_in_t_arr = enc_in.split(1, 1)
 
         # Prepare decoder inputs
         # ==============================
@@ -191,9 +190,9 @@ class CDModel(pl.LightningModule):
 
         # Loop through the conversation
         # ==============================
-        enc_in_t: Tensor = enc_in_t_arr[0]
+        enc_in_t: Tensor = enc_in[:, 0, None]
         for i in range(num_steps - 1):
-            hist, enc_h = self.enc(i=i, history=hist, h=enc_h, input=enc_in_t)
+            enc_h = self.enc(i=i, history=hist, h=enc_h, input=enc_in_t)
             y_hat_t, dec_h, w_t = self.dec(
                 input=hist,
                 h=dec_h,
@@ -207,13 +206,13 @@ class CDModel(pl.LightningModule):
             w[:, i] = w_t
 
             # Handle autoregressive training if enabled
-            enc_in_t = enc_in_t_arr[i + 1].clone()
+            enc_in_t = enc_in[:, i + 1, None]
             if autoregressive:
                 spk_is_primary_t = spk_is_primary_t_arr[i + 1]
                 enc_in_t[spk_is_primary_t, :, : self.num_features] = y_hat_t.detach()[
                     spk_is_primary_t
                 ].type(enc_in_t.dtype)
-                
+
         return y_hat, w
 
     def training_step(self, batch: ConversationBatch, batch_idx: int):

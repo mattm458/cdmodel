@@ -11,9 +11,7 @@ class EncoderType(nn.Module, ABC):
         pass
 
     @abstractmethod
-    def forward(
-        self, i: int, history: Tensor, h: Tensor, input: Tensor
-    ) -> tuple[Tensor, Tensor]:
+    def forward(self, i: int, history: Tensor, h: Tensor, input: Tensor) -> Tensor:
         pass
 
 
@@ -34,13 +32,10 @@ class Encoder(EncoderType):
         )
         x, h = self.rnn(x)
         history, _ = nn.utils.rnn.pad_packed_sequence(x, batch_first=True)
-
         return history, h
 
-    def forward(
-        self, i: int, history: Tensor, h: Tensor, input: Tensor
-    ) -> tuple[Tensor, Tensor]:
-        return history, h
+    def forward(self, i: int, history: Tensor, h: Tensor, input: Tensor) -> Tensor:
+        return h
 
 
 class EncoderCell(EncoderType):
@@ -56,26 +51,22 @@ class EncoderCell(EncoderType):
 
     def init(self, input: Tensor, lengths: Tensor) -> tuple[Tensor, Tensor]:
         batch_size, num_steps, _ = input.shape
-        return torch.zeros(
-            batch_size,
-            num_steps - 1,
-            self.hidden_size,
-            device=input.device,
-            dtype=input.dtype,
-        ), torch.zeros(
-            self.num_layers,
-            batch_size,
-            self.hidden_size,
-            device=input.device,
+        return (
+            torch.zeros(
+                batch_size,
+                num_steps - 1,
+                self.hidden_size,
+                device=input.device,
+            ),
+            torch.zeros(
+                self.num_layers,
+                batch_size,
+                self.hidden_size,
+                device=input.device,
+            ),
         )
 
-    def forward(
-        self, i: int, history: Tensor, h: Tensor, input: Tensor
-    ) -> tuple[Tensor, Tensor]:
+    def forward(self, i: int, history: Tensor, h: Tensor, input: Tensor) -> Tensor:
         x, h = self.rnn(input, h)
-        return (
-            history.index_copy(
-                1, torch.tensor([i], device=history.device), x.type(history.dtype)
-            ),
-            h,
-        )
+        history[:, i] = x.squeeze(1)
+        return h
