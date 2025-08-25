@@ -11,7 +11,7 @@ from cdmodel.model.components.embeddings_encoder import EmbeddingsEncoder
 from cdmodel.model.components.encoder import Encoder, EncoderCell, EncoderType
 from cdmodel.util.visualization import plot_weights
 
-AttentionMaskingStrategy = Literal["partner"] | Literal["secondary"]
+AttentionMaskingStrategy = Literal["partner"] | Literal["both"]
 
 
 def _append_context(tensors: list[Tensor | None], cond: list[bool], b: int, n: int):
@@ -176,9 +176,8 @@ class CDModel(pl.LightningModule):
         spk_rank_pred = spk_rank[:, 1:, None]
         if self.att_mask_strategy == "partner":
             spk_rank_cond = (spk_rank_hist != spk_rank_pred) & (spk_rank_hist != 0)
-        elif self.att_mask_strategy == "secondary":
-            # TODO: This doesn't work, fix pls
-            spk_rank_cond = (spk_rank_hist != spk_rank_pred) & (spk_rank_hist != 0)
+        elif self.att_mask_strategy == "both":
+            spk_rank_cond = spk_rank_hist.repeat(1, num_steps - 1, 1) != 0
         else:
             raise ValueError(
                 f"Unknown attention mask strategy {self.att_mask_strategy}"
@@ -186,7 +185,7 @@ class CDModel(pl.LightningModule):
         hist_mask_t_arr = spk_rank_cond.tril().unbind(1)
 
         y_hat = torch.zeros(batch_size, num_steps - 1, self.num_features, device=device)
-        w_arr: list[Tensor] = []
+        w = torch.zeros(batch_size, num_steps - 1, num_steps - 1, 1, device=device)
 
         # Loop through the conversation
         # ==============================
@@ -203,22 +202,16 @@ class CDModel(pl.LightningModule):
             )
 
             y_hat[:, i] = y_hat_t.squeeze(1)
-            w_arr.append(w_t)
+            w[:, i] = w_t
 
             # Handle autoregressive training if enabled
-            enc_in_t = enc_in_t_arr[i + 1]
+            enc_in_t = enc_in_t_arr[i + 1].clone()
             if autoregressive:
                 spk_is_primary_t = spk_is_primary_t_arr[i + 1]
                 enc_in_t[spk_is_primary_t, :, : self.num_features] = y_hat_t.detach()[
                     spk_is_primary_t
                 ].type(enc_in_t.dtype)
-
-        # Batch, prediction timesteps, history, 1
-        # TODO: Move this to decoder?
-        w = torch.stack(
-            [F.pad(x, (0, 0, 0, f.shape[1] - x.shape[1] - 1)) for x in w_arr], 1
-        )
-
+                
         return y_hat, w
 
     def training_step(self, batch: ConversationBatch, batch_idx: int):
