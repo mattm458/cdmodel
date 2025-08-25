@@ -1,19 +1,8 @@
-# Machine Learning Template Repository
+# Conversational Dynamics Modeling
 
-This repository contains a template for all of my ML projects. The template includes the following components:
+This repository contains a model created to study the dynamics of prosody and speech quality across conversations. It is the subject of my PhD dissertation, and was studied in the following scientific papers:
 
-- Basic project structure built around PyTorch Lightning, including example models, dataloaders, tests, etc.
-- A basic pyproject.toml file, including imports I use in most projects.
-- A simple executable that bootstraps [Lightning CLI](https://lightning.ai/docs/pytorch/stable/api/lightning.pytorch.cli.LightningCLI.html).
+-   [An Autoregressive Conversational Dynamics Model for Dialogue Systems](https://www.isca-archive.org/interspeech_2023/mcneill23_interspeech.html)
+-   [Autoregressive cross-interlocutor attention scores meaningfully capture conversational dynamics](https://www.isca-archive.org/interspeech_2024/mcneill24_interspeech.html)
 
-Once you make your own project from this repository, create a virtual environment, enter it, then run:
-
-```pip install -e .```
-
-Please use the `config/` directory to manage different model configurations.
-
-Once you have customized the repository, start training with:
-
-```
-<executable name> fit --config config/<configuration file>.json
-```
+This README was mainly written to document how to install and run the model, though it does contain some information about why it was made and how it works. For more information, please refer to the papers above.
