@@ -1,5 +1,10 @@
 from typing import Final, Literal
 
+import matplotlib
+
+matplotlib.use("Agg")
+
+import matplotlib.pyplot as plt
 import torch
 from lightning import pytorch as pl
 from torch import Tensor, nn
@@ -287,15 +292,22 @@ class CDModel(pl.LightningModule):
             conv_length: int = int(batch.conv_lengths[0].item())
             w = weights[0, : conv_length - 1, :conv_length].squeeze().cpu().numpy()
             sr = batch.speaker_rank[0, :conv_length].cpu().numpy()
+
+            fig_weights_1 = plot_weights(weights=w, spk_rank=sr, spk=1)
+            fig_weights_2 = plot_weights(weights=w, spk_rank=sr, spk=2)
+            fig_weights_both = plot_weights(weights=w, spk_rank=sr, spk=None)
             self.logger.experiment.add_figure(
-                "weights_1",
-                plot_weights(weights=w, spk_rank=sr, spk=1),
-                global_step=self.global_step,
+                "weights_1", fig_weights_1, global_step=self.global_step
             )
             self.logger.experiment.add_figure(
-                "weights_2",
-                plot_weights(weights=w, spk_rank=sr, spk=2),
-                global_step=self.global_step,
+                "weights_2", fig_weights_2, global_step=self.global_step
             )
+            self.logger.experiment.add_figure(
+                "weights_both", fig_weights_both, global_step=self.global_step
+            )
+
+            plt.close(fig_weights_1)
+            plt.close(fig_weights_2)
+            plt.close(fig_weights_both)
 
         return loss
