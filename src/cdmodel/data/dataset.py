@@ -73,6 +73,8 @@ class ConversationDataset(Dataset):
             f = features[speaker_id_mask]
             features[speaker_id_mask] = (f - f.mean(0)) / f.std(0)
 
+        features_d = features.diff(dim=0, prepend=torch.zeros(1, len(self.features)))
+
         # Assign labels of 1 and 2 for primary and secondary speaker, respectively,
         # according to the selection criteria
         speaker_rank: Tensor = (
@@ -84,6 +86,7 @@ class ConversationDataset(Dataset):
         # Add a leading 0 to all data if requested
         if self.zero_pad:
             features = F.pad(features, (0, 0, 1, 0))
+            features_d = F.pad(features_d, (0, 0, 1, 0))
             speaker_ids = F.pad(speaker_ids, (1, 0))
             speaker_rank = F.pad(speaker_rank, (1, 0))
 
@@ -92,6 +95,7 @@ class ConversationDataset(Dataset):
 
         return ConversationBatch(
             features=features.unsqueeze(0),
+            features_d=features_d.unsqueeze(0),
             conv_lengths=torch.tensor([len(features)]),
             speaker_ids=speaker_ids.unsqueeze(0),
             speaker_rank=speaker_rank.unsqueeze(0),
