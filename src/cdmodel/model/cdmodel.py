@@ -69,7 +69,7 @@ class CDModel(pl.LightningModule):
         # Encoder
         # ==============================
         self.enc_emb_in: Final[bool] = "encoder" in emb_in
-        self.enc_spk_in: Final[bool] = self.enc_spk_in
+        self.enc_spk_in: Final[bool] = "encoder" in spk_in
         enc_in_dim = (
             self.num_features + (2 * self.enc_spk_in) + (emb_proj_dim * self.enc_emb_in)
         )
@@ -87,10 +87,10 @@ class CDModel(pl.LightningModule):
         # Decoder
         # ==============================
         self.att_emb_in: Final[bool] = "attention" in emb_in
-        self.att_spk_in: Final[bool] = "encoder" in spk_in
-        self.dec_spk_in: Final[bool] = "decoder" in spk_in
         self.dec_emb_in: Final[bool] = "decoder" in emb_in
         self.lin_emb_in: Final[bool] = "linear" in emb_in
+        self.att_spk_in: Final[bool] = "encoder" in spk_in
+        self.dec_spk_in: Final[bool] = "decoder" in spk_in
         self.dec = DecoderCell(
             in_dim=enc_h_dim,
             att_ctx_dim=(2 * self.att_spk_in) + (emb_proj_dim * self.att_emb_in),
