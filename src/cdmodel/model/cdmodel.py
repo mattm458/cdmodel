@@ -17,6 +17,11 @@ from cdmodel.model.components.encoder import Encoder, EncoderCell, EncoderType
 from cdmodel.util.visualization import plot_weights
 
 AttentionMaskingStrategy = Literal["partner"] | Literal["both"]
+OutputFormat = Literal["feature"] | Literal["feature_delta"]
+EmbeddingInputs = list[
+    Literal["encoder"] | Literal["decoder"] | Literal["attention"] | Literal["linear"]
+]
+SpeakerInputs = list[Literal["encoder"] | Literal["decoder"] | Literal["attention"]]
 
 
 def _append_context(
@@ -32,22 +37,17 @@ class CDModel(pl.LightningModule):
     def __init__(
         self,
         feature_names: list[str],
-        emb_style: str | None,
+        emb_in: EmbeddingInputs,
         emb_proj: bool,
+        emb_style: str | None,
+        spk_in: SpeakerInputs,
         enc_h_dim: int,
         enc_layers: int,
-        enc_spk_in: bool,
-        enc_emb_in: bool,
-        att_emb_in: bool,
-        att_spk_in: bool,
         att_mask_strategy: AttentionMaskingStrategy,
         dec_h_dim: int,
         dec_layers: int,
-        dec_emb_in: bool,
-        dec_spk_in: bool,
         lin_layers: int,
         lin_h_dim: int,
-        lin_emb_in: bool,
         ar_train: bool,
         ar_val: bool,
         train_primary_speaker_only: bool,
@@ -63,38 +63,16 @@ class CDModel(pl.LightningModule):
 
         self.att_mask_strategy: Final[AttentionMaskingStrategy] = att_mask_strategy
 
-        self.emb_style: Final[str | None] = emb_style
-        self.enc_emb_in: Final[bool] = enc_emb_in
-        self.att_emb_in: Final[bool] = att_emb_in
-        self.att_spk_in: Final[bool] = att_spk_in
-        self.dec_emb_in: Final[bool] = dec_emb_in
-        self.lin_emb_in: Final[bool] = lin_emb_in
-
         self.train_primary_speaker_only: Final[bool] = train_primary_speaker_only
-
-        # Embeddings
-        # ==============================
-        self.emb_enc = EmbeddingsEncoder(
-            emb_style=emb_style,
-            emb_proj=emb_proj,
-            emb_dim=emb_dim,
-            emb_proj_dim=emb_proj_dim,
-        )
-        if self.emb_enc.enabled:
-            if not enc_emb_in and not att_emb_in and not dec_emb_in and not lin_emb_in:
-                raise Exception(
-                    "Embeddings are enabled, but they are not given as input to any component"
-                )
-        else:
-            if enc_emb_in or att_emb_in or dec_emb_in or lin_emb_in:
-                raise Exception(
-                    "Embeddings are configured as model component inputs, but embeddings are disabled."
-                )
+        self.output: Final[OutputFormat] = output
 
         # Encoder
         # ==============================
-        self.enc_spk_in: Final[bool] = enc_spk_in
-        enc_in_dim = self.num_features + (2 * enc_spk_in) + (emb_proj_dim * enc_emb_in)
+        self.enc_emb_in: Final[bool] = "encoder" in emb_in
+        self.enc_spk_in: Final[bool] = self.enc_spk_in
+        enc_in_dim = (
+            self.num_features + (2 * self.enc_spk_in) + (emb_proj_dim * self.enc_emb_in)
+        )
 
         self.enc: EncoderType
         if ar_train or ar_val:
@@ -108,18 +86,47 @@ class CDModel(pl.LightningModule):
 
         # Decoder
         # ==============================
-        self.dec_spk_in: Final[bool] = dec_spk_in
+        self.att_emb_in: Final[bool] = "attention" in emb_in
+        self.att_spk_in: Final[bool] = "encoder" in spk_in
+        self.dec_spk_in: Final[bool] = "decoder" in spk_in
+        self.dec_emb_in: Final[bool] = "decoder" in emb_in
+        self.lin_emb_in: Final[bool] = "linear" in emb_in
         self.dec = DecoderCell(
             in_dim=enc_h_dim,
-            att_ctx_dim=(2 * att_spk_in) + (emb_proj_dim * att_emb_in),
-            dec_ctx_dim=(2 * dec_spk_in) + (emb_proj_dim * dec_emb_in),
-            lin_ctx_dim=emb_proj_dim * lin_emb_in,
+            att_ctx_dim=(2 * self.att_spk_in) + (emb_proj_dim * self.att_emb_in),
+            dec_ctx_dim=(2 * self.dec_spk_in) + (emb_proj_dim * self.dec_emb_in),
+            lin_ctx_dim=emb_proj_dim * self.lin_emb_in,
             h_dim=dec_h_dim,
             num_layers=dec_layers,
             lin_num_layers=lin_layers,
             lin_h_dim=lin_h_dim,
             features=feature_names,
         )
+
+        # Embeddings
+        # ==============================
+        self.emb_style: Final[str | None] = emb_style
+        self.emb_enc = EmbeddingsEncoder(
+            emb_style=emb_style,
+            emb_proj=emb_proj,
+            emb_dim=emb_dim,
+            emb_proj_dim=emb_proj_dim,
+        )
+        if self.emb_enc.enabled:
+            if (
+                not self.enc_emb_in
+                and not self.att_emb_in
+                and not self.dec_emb_in
+                and not self.lin_emb_in
+            ):
+                raise Exception(
+                    "Embeddings are enabled, but they are not given as input to any component"
+                )
+        else:
+            if self.enc_emb_in or self.att_emb_in or self.dec_emb_in or self.lin_emb_in:
+                raise Exception(
+                    "Embeddings are configured as model component inputs, but embeddings are disabled."
+                )
 
     def forward(
         self,
