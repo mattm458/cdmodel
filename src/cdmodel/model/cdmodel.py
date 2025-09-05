@@ -51,6 +51,8 @@ class CDModel(pl.LightningModule):
         ar_train: bool,
         ar_val: bool,
         train_primary_speaker_only: bool,
+        output: OutputFormat,
+        dec_skip_conn: bool,
         emb_dim: int = 0,
         emb_proj_dim: int = 0,
     ):
@@ -101,6 +103,7 @@ class CDModel(pl.LightningModule):
             lin_num_layers=lin_layers,
             lin_h_dim=lin_h_dim,
             features=feature_names,
+            skip_conn=dec_skip_conn,
         )
 
         # Embeddings
@@ -215,7 +218,7 @@ class CDModel(pl.LightningModule):
         enc_in_t: Tensor = enc_in[:, 0, None]
         for i in range(num_steps - 1):
             enc_h = self.enc(i=i, history=hist, h=enc_h, input=enc_in_t)
-            y_hat_t, dec_h, w_t = self.dec(
+            y_hat_t, dec_h, att_t, w_t = self.dec(
                 input=hist,
                 h=dec_h,
                 mask=hist_mask_t_arr[i],
@@ -247,7 +250,13 @@ class CDModel(pl.LightningModule):
             segment_emb=batch.segment_embeddings,
             autoregressive=self.ar_train,
         )
-        y = batch.features[:, 1:]
+
+        if self.output == "feature":
+            y = batch.features[:, 1:]
+        elif self.output == "feature_delta":
+            y = batch.features_d[:, 1:]
+        else:
+            raise ValueError(f"Unknown output format {self.output}")
 
         if self.train_primary_speaker_only:
             mask = batch.speaker_rank[:, 1:] == 1
@@ -277,7 +286,13 @@ class CDModel(pl.LightningModule):
             segment_emb=batch.segment_embeddings,
             autoregressive=self.ar_val,
         )
-        y = batch.features[:, 1:]
+
+        if self.output == "feature":
+            y = batch.features[:, 1:]
+        elif self.output == "feature_delta":
+            y = batch.features_d[:, 1:]
+        else:
+            raise ValueError(f"Unknown output format {self.output}")
 
         if self.train_primary_speaker_only:
             mask = batch.speaker_rank[:, 1:] == 1
