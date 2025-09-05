@@ -12,6 +12,23 @@ from cdmodel.data.collate_fn import collate_fn
 from cdmodel.data.dataset import ConversationDataset, PrimarySpeakerSelectionStrategy
 
 
+def split_ids(
+    ids: set[int], train_size: float = 0.8
+) -> tuple[list[int], list[int], list[int]]:
+    ids_lst = list(ids)
+    ids_lst.sort()
+
+    ids_train, ids_test = train_test_split(
+        ids_lst,
+        random_state=42,
+        train_size=train_size,
+    )
+
+    ids_test, ids_val = train_test_split(ids_test, random_state=42, test_size=0.5)
+
+    return ids_train, ids_val, ids_test
+
+
 class ConversationDataModule(LightningDataModule):
     def __init__(
         self,
@@ -41,17 +58,12 @@ class ConversationDataModule(LightningDataModule):
         print("Preparing data")
 
     def setup(self, stage: str):
-        self.conv_ids_train, self.conv_ids_test = train_test_split(
-            np.sort(
+        self.conv_ids_train, self.conv_ids_val, self.conv_ids_test = split_ids(
+            set(
                 pd.read_csv(path.join(self.dataset_dir, "data.csv"), engine="pyarrow")[
                     "id"
                 ].unique()
-            ).tolist(),
-            random_state=42,
-            train_size=0.8,
-        )
-        self.conv_ids_test, self.conv_ids_val = train_test_split(
-            self.conv_ids_test, random_state=42, test_size=0.5
+            )
         )
 
     def train_dataloader(self) -> DataLoader:
