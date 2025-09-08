@@ -138,6 +138,7 @@ class CDModel(pl.LightningModule):
         spk_rank: Tensor,
         segment_emb: Tensor | None,
         autoregressive: bool,
+        return_weights: bool = False,
     ):
         # Pull some metadata from the inputs
         (batch_size, num_steps, _), device = f.shape, f.device
@@ -161,6 +162,7 @@ class CDModel(pl.LightningModule):
             n=num_steps,
             device=f.device,
         )
+        enc_in_arr = enc_in.split(1, 1)
 
         # Prepare decoder inputs
         # ==============================
@@ -171,24 +173,35 @@ class CDModel(pl.LightningModule):
             n=num_steps,
             device=f.device,
         ).unbind(1)
-        dec_ctx_t_arr = _append_context(
-            tensors=[spk_rank_one_hot[:, 1:], emb_proj[:, 1:]],
-            cond=[self.dec_spk_in, self.dec_emb_in],
-            b=batch_size,
-            n=num_steps,
-            device=f.device,
-        ).split(1, 1)
-        lin_ctx_t_arr = _append_context(
-            tensors=[emb_proj[:, 1:]],
-            cond=[self.lin_emb_in],
-            b=batch_size,
-            n=num_steps,
-            device=f.device,
-        ).split(1, 1)
+        dec_ctx_t_arr = (
+            _append_context(
+                tensors=[spk_rank_one_hot[:, 1:], emb_proj[:, 1:]],
+                cond=[self.dec_spk_in, self.dec_emb_in],
+                b=batch_size,
+                n=num_steps,
+                device=f.device,
+            )
+            .unsqueeze(2)
+            .unbind(1)
+        )
+        lin_ctx_t_arr = (
+            _append_context(
+                tensors=[emb_proj[:, 1:]],
+                cond=[self.lin_emb_in],
+                b=batch_size,
+                n=num_steps,
+                device=f.device,
+            )
+            .unsqueeze(2)
+            .unbind(1)
+        )
 
         # Get state objects for the encoder and decoder
         # ==============================
         hist, enc_h = self.enc.init(input=enc_in, lengths=conv_lengths)
+        precomputed_keys: Tensor | None = None
+        if not autoregressive:
+            precomputed_keys = self.dec.attention.precompute_keys(hist)
         dec_h = self.dec.init(batch_size=batch_size, device=device)
 
         # Create the history mask.
@@ -211,11 +224,14 @@ class CDModel(pl.LightningModule):
         hist_mask_t_arr = spk_rank_cond.tril().unbind(1)
 
         y_hat = torch.zeros(batch_size, num_steps - 1, self.num_features, device=device)
-        w = torch.zeros(batch_size, num_steps - 1, num_steps - 1, 1, device=device)
+        if return_weights:
+            w = torch.zeros(batch_size, num_steps - 1, num_steps - 1, 1, device=device)
+        else:
+            w = None
 
         # Loop through the conversation
         # ==============================
-        enc_in_t: Tensor = enc_in[:, 0, None]
+        enc_in_t: Tensor = enc_in_arr[0]
         for i in range(num_steps - 1):
             enc_h = self.enc(i=i, history=hist, h=enc_h, input=enc_in_t)
             y_hat_t, dec_h, att_t, w_t = self.dec(
@@ -228,15 +244,16 @@ class CDModel(pl.LightningModule):
             )
 
             y_hat[:, i] = y_hat_t.squeeze(1)
-            w[:, i] = w_t
+            if return_weights and w is not None:
+                w[:, i] = w_t
 
             # Handle autoregressive training if enabled
-            enc_in_t = enc_in[:, i + 1, None]
+            enc_in_t = enc_in_arr[i + 1]
             if autoregressive:
                 spk_is_primary_t = spk_is_primary_t_arr[i + 1]
                 enc_in_t[spk_is_primary_t, :, : self.num_features] = y_hat_t.detach()[
                     spk_is_primary_t
-                ].type(enc_in_t.dtype)
+                ].type_as(enc_in_t)
 
         return y_hat, w
 
@@ -285,6 +302,7 @@ class CDModel(pl.LightningModule):
             spk_rank=batch.speaker_rank,
             segment_emb=batch.segment_embeddings,
             autoregressive=self.ar_val,
+            return_weights=True,
         )
 
         if self.output == "feature":

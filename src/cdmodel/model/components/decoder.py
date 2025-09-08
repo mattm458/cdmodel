@@ -22,9 +22,15 @@ class DecoderCell(nn.Module):
     ):
         super().__init__()
 
+        self.flattened = False
+
         self.hidden_size: Final[int] = h_dim
         self.num_layers: Final[int] = num_layers
         self.skip_conn: Final[bool] = skip_conn
+
+        self.att_ctx_dim: Final[int] = att_ctx_dim
+        self.dec_ctx_dim: Final[int] = dec_ctx_dim
+        self.lin_ctx_dim: Final[int] = lin_ctx_dim
 
         self.attention = AdditiveAttention(
             hidden_dim=in_dim, query_dim=(h_dim * num_layers) + att_ctx_dim
@@ -70,18 +76,36 @@ class DecoderCell(nn.Module):
         lin_ctx: Tensor,
         mask: Optional[Tensor] = None,
     ):
+        if not self.flattened:
+            self.rnn.flatten_parameters()
+            self.flattened = True
+
         batch_size = input.shape[0]
 
         q = h.permute(1, 0, 2).reshape(batch_size, -1)
-        att_out, att_weights = self.attention(
-            query=torch.concat([q, att_ctx], -1), keys=input, mask=mask
-        )
 
-        x, h = self.rnn(torch.concat([att_out, dec_ctx], dim=-1), h)
+        att_in = q if self.att_ctx_dim == 0 else torch.concat([q, att_ctx], -1)
+        if precomputed_keys is not None:
+            att_out, att_weights = self.attention(
+                query=att_in,
+                keys=precomputed_keys,
+                mask=mask,
+                precomputed_keys=True,
+            )
+        else:
+            att_out, att_weights = self.attention(query=att_in, keys=input, mask=mask)
+
+        dec_in = (
+            att_out
+            if self.dec_ctx_dim == 0
+            else torch.concat([att_out, dec_ctx], dim=-1)
+        )
+        x, h = self.rnn(dec_in, h)
 
         if self.skip_conn:
             x = x + att_out
 
-        outputs = self.linear(torch.concat([x, lin_ctx], -1))
+        lin_in = x if self.lin_ctx_dim == 0 else torch.concat([x, lin_ctx], -1)
+        outputs = self.linear(lin_in)
 
         return outputs, h, att_out, att_weights

@@ -9,12 +9,24 @@ class AdditiveAttention(nn.Module):
     def __init__(self, hidden_dim: int, query_dim: int):
         super().__init__()
 
-        self.w = nn.Linear(query_dim, hidden_dim)
-        self.u = nn.Linear(hidden_dim, hidden_dim)
-        self.v = nn.Linear(hidden_dim, 1)
+        self.w = nn.Linear(query_dim, hidden_dim,bias=False)
+        self.u = nn.Linear(hidden_dim, hidden_dim,bias=False)
+        self.v = nn.Linear(hidden_dim, 1,bias=False)
 
-    def forward(self, query: Tensor, keys: Tensor, mask: Optional[Tensor] = None):
-        scores = self.v(torch.tanh(self.w(query.unsqueeze(1)) + self.u(keys)))
+    def precompute_keys(self, keys: Tensor) -> Tensor:
+        return self.u(keys)
+
+    def forward(
+        self,
+        query: Tensor,
+        keys: Tensor,
+        mask: Optional[Tensor] = None,
+        precomputed_keys: bool = False,
+    ):
+        if precomputed_keys:
+            scores = self.v(torch.tanh(self.w(query.unsqueeze(1)) + keys))
+        else:
+            scores = self.v(torch.tanh(self.w(query.unsqueeze(1)) + self.u(keys)))
 
         if mask is None:
             weights = F.softmax(scores, dim=1)
