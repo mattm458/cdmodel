@@ -91,7 +91,7 @@ class CDModel(pl.LightningModule):
         self.att_emb_in: Final[bool] = "attention" in emb_in
         self.dec_emb_in: Final[bool] = "decoder" in emb_in
         self.lin_emb_in: Final[bool] = "linear" in emb_in
-        self.att_spk_in: Final[bool] = "encoder" in spk_in
+        self.att_spk_in: Final[bool] = "attention" in spk_in
         self.dec_spk_in: Final[bool] = "decoder" in spk_in
         self.dec = DecoderCell(
             in_dim=enc_h_dim,
@@ -216,7 +216,7 @@ class CDModel(pl.LightningModule):
         if self.att_mask_strategy == "partner":
             spk_rank_cond = (spk_rank_hist != spk_rank_pred) & (spk_rank_hist != 0)
         elif self.att_mask_strategy == "both":
-            spk_rank_cond = spk_rank_hist.repeat(1, num_steps - 1, 1) != 0
+            spk_rank_cond = (spk_rank_hist != 0).expand(-1, num_steps - 1, -1)
         else:
             raise ValueError(
                 f"Unknown attention mask strategy {self.att_mask_strategy}"
