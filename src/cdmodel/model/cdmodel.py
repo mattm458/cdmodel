@@ -93,6 +93,9 @@ class CDModel(pl.LightningModule):
         self.lin_emb_in: Final[bool] = "linear" in emb_in
         self.att_spk_in: Final[bool] = "attention" in spk_in
         self.dec_spk_in: Final[bool] = "decoder" in spk_in
+        self.enc_h_dim: Final[int] = enc_h_dim
+        self.dec_h_dim: Final[int] = dec_h_dim
+        self.dec_layers: Final[int] = dec_layers
         self.dec = DecoderCell(
             in_dim=enc_h_dim,
             att_ctx_dim=(2 * self.att_spk_in) + (emb_proj_dim * self.att_emb_in),
@@ -138,7 +141,7 @@ class CDModel(pl.LightningModule):
         spk_rank: Tensor,
         segment_emb: Tensor | None,
         autoregressive: bool,
-        return_weights: bool = False,
+        return_h: bool = False,
     ):
         # Pull some metadata from the inputs
         (batch_size, num_steps, _), device = f.shape, f.device
@@ -223,11 +226,25 @@ class CDModel(pl.LightningModule):
             )
         hist_mask_t_arr = spk_rank_cond.tril().unbind(1)
 
-        y_hat = torch.zeros(batch_size, num_steps - 1, self.num_features, device=device)
-        if return_weights:
-            w = torch.zeros(batch_size, num_steps - 1, num_steps - 1, 1, device=device)
-        else:
-            w = None
+        y_hat_all = torch.zeros(
+            batch_size, num_steps - 1, self.num_features, device=device
+        )
+        att_h_all: Tensor | None = None
+        att_w_all: Tensor | None = None
+        dec_h_all: Tensor | None = None
+        if return_h:
+            att_h_all = torch.zeros(
+                batch_size, num_steps - 1, self.enc_h_dim, device=device
+            )
+            att_w_all = torch.zeros(
+                batch_size, num_steps - 1, num_steps - 1, 1, device=device
+            )
+            dec_h_all = torch.zeros(
+                batch_size,
+                num_steps - 1,
+                self.dec_h_dim * self.dec_layers,
+                device=device,
+            )
 
         # Loop through the conversation
         # ==============================
@@ -243,9 +260,13 @@ class CDModel(pl.LightningModule):
                 lin_ctx=lin_ctx_t_arr[i],
             )
 
-            y_hat[:, i] = y_hat_t.squeeze(1)
-            if return_weights and w is not None:
-                w[:, i] = w_t
+            y_hat_all[:, i] = y_hat_t.squeeze(1)
+            if att_w_all is not None:
+                att_w_all[:, i] = w_t
+            if att_h_all is not None:
+                att_h_all[:, i] = att_t.detach().squeeze(1)
+            if dec_h_all is not None:
+                dec_h_all[:, i] = dec_h.detach().swapaxes(0, 1).reshape(batch_size, -1)
 
             # Handle autoregressive training if enabled
             enc_in_t = enc_in_arr[i + 1]
@@ -255,12 +276,12 @@ class CDModel(pl.LightningModule):
                     spk_is_primary_t
                 ].type_as(enc_in_t)
 
-        return y_hat, w
+        return y_hat_all, att_w_all, att_h_all, dec_h_all
 
     def training_step(self, batch: ConversationBatch, batch_idx: int):
         batch_size: Final[int] = batch.features.shape[0]
 
-        y_hat, weights = self(
+        y_hat, _, _, _ = self(
             f=batch.features,
             conv_lengths=batch.conv_lengths,
             spk_rank=batch.speaker_rank,
@@ -296,13 +317,13 @@ class CDModel(pl.LightningModule):
     def validation_step(self, batch: ConversationBatch, batch_idx: int):
         batch_size: Final[int] = batch.features.shape[0]
 
-        y_hat, weights = self(
+        y_hat, weights, _, _ = self(
             f=batch.features,
             conv_lengths=batch.conv_lengths,
             spk_rank=batch.speaker_rank,
             segment_emb=batch.segment_embeddings,
             autoregressive=self.ar_val,
-            return_weights=True,
+            return_h=True,
         )
 
         if self.output == "feature":
@@ -351,3 +372,15 @@ class CDModel(pl.LightningModule):
             plt.close(fig_weights_both)
 
         return loss
+
+    def predict_step(self, batch: ConversationBatch, batch_idx: int):
+        y_hat, weights, att, dec = self(
+            f=batch.features,
+            conv_lengths=batch.conv_lengths,
+            spk_rank=batch.speaker_rank,
+            segment_emb=batch.segment_embeddings,
+            autoregressive=self.ar_val,
+            return_h=True,
+        )
+
+        return batch, y_hat, weights, att, dec
