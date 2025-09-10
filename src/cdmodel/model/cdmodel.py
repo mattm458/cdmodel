@@ -14,6 +14,7 @@ from cdmodel.common.data import ConversationBatch
 from cdmodel.model.components.decoder import DecoderCell
 from cdmodel.model.components.embeddings_encoder import EmbeddingsEncoder
 from cdmodel.model.components.encoder import Encoder, EncoderCell, EncoderType
+from cdmodel.model.components.ist_encoder import ISTEncoder
 from cdmodel.util.visualization import plot_weights
 
 AttentionMaskingStrategy = Literal["partner"] | Literal["both"]
@@ -22,6 +23,7 @@ EmbeddingInputs = list[
     Literal["encoder"] | Literal["decoder"] | Literal["attention"] | Literal["linear"]
 ]
 SpeakerInputs = list[Literal["encoder"] | Literal["decoder"] | Literal["attention"]]
+IstInputs = list[Literal["decoder"] | Literal["attention"] | Literal["linear"]]
 
 
 def _append_context(
@@ -55,6 +57,12 @@ class CDModel(pl.LightningModule):
         dec_skip_conn: bool,
         emb_dim: int = 0,
         emb_proj_dim: int = 0,
+        ist: bool = False,
+        ist_tokens: int = 0,
+        ist_dim: int = 0,
+        ist_layers: int = 0,
+        ist_h_dim: int = 0,
+        ist_in: IstInputs = [],
     ):
         super().__init__()
         self.save_hyperparameters()
@@ -67,6 +75,23 @@ class CDModel(pl.LightningModule):
 
         self.train_primary_speaker_only: Final[bool] = train_primary_speaker_only
         self.output: Final[OutputFormat] = output
+
+        # Interaction Style Tokens
+        # ==============================
+        self.att_ist_in: Final[bool] = "attention" in ist_in
+        self.dec_ist_in: Final[bool] = "decoder" in ist_in
+        self.lin_ist_in: Final[bool] = "linear" in ist_in
+        self.ist_dim: Final[int] = ist_dim
+        self.ist_enc: nn.Module | None = None
+        if ist:
+            self.ist_enc = ISTEncoder(
+                in_dim=self.num_features,
+                num_tokens=ist_tokens,
+                token_dim=ist_dim,
+                h_dim=ist_h_dim,
+                layers=ist_layers,
+                learn_rnn_initial_state=learn_rnn_initial_state,
+            )
 
         # Encoder
         # ==============================
@@ -98,9 +123,13 @@ class CDModel(pl.LightningModule):
         self.dec_layers: Final[int] = dec_layers
         self.dec = DecoderCell(
             in_dim=enc_h_dim,
-            att_ctx_dim=(2 * self.att_spk_in) + (emb_proj_dim * self.att_emb_in),
-            dec_ctx_dim=(2 * self.dec_spk_in) + (emb_proj_dim * self.dec_emb_in),
-            lin_ctx_dim=emb_proj_dim * self.lin_emb_in,
+            att_ctx_dim=(2 * self.att_spk_in)
+            + (emb_proj_dim * self.att_emb_in)
+            + (ist_dim * self.att_ist_in),
+            dec_ctx_dim=(2 * self.dec_spk_in)
+            + (emb_proj_dim * self.dec_emb_in)
+            + (ist_dim * self.dec_ist_in),
+            lin_ctx_dim=(emb_proj_dim * self.lin_emb_in) + (ist_dim * self.lin_ist_in),
             h_dim=dec_h_dim,
             num_layers=dec_layers,
             lin_num_layers=lin_layers,
@@ -137,6 +166,8 @@ class CDModel(pl.LightningModule):
     def forward(
         self,
         f: Tensor,
+        f_d_sides: dict[int, Tensor],
+        sides_lengths: dict[int, Tensor],
         conv_lengths: Tensor,
         spk_rank: Tensor,
         segment_emb: Tensor | None,
@@ -153,8 +184,28 @@ class CDModel(pl.LightningModule):
 
         # Prepare various input data
         # ==============================
-        spk_rank_one_hot = F.one_hot(spk_rank)[:, :, 1:]  # Speaker rank one-hot encoded
-        spk_is_primary_t_arr = (spk_rank == 1).unbind(1)  # Identify primary speakers
+        spk_rank_one_hot = F.one_hot(spk_rank)[:, :, 1:]
+        spk_is_primary = spk_rank == 1
+        spk_is_secondary = spk_rank == 2
+        spk_is_primary_t_arr = spk_is_primary.unbind(1)
+
+        # Prepare IST embedding
+        if self.ist_enc is not None:
+            ist_emb = torch.zeros(batch_size, num_steps, self.ist_dim, device=device)
+
+            ist_primary, ist_primary_w = self.ist_enc(f_d_sides[1], sides_lengths[1])
+            ist_secondary, ist_secondary_w = self.ist_enc(
+                f_d_sides[2], sides_lengths[2]
+            )
+
+            ist_emb[spk_is_primary] = ist_primary.type_as(ist_emb)[:, None, :].expand(
+                -1, num_steps, -1
+            )[spk_is_primary]
+            ist_emb[spk_is_secondary] = ist_secondary.type_as(ist_emb)[
+                :, None, :
+            ].expand(-1, num_steps, -1)[spk_is_secondary]
+        else:
+            ist_emb = torch.zeros(batch_size, num_steps, 0, device=device)
 
         # Prepare encoder inputs
         # ==============================
@@ -170,16 +221,16 @@ class CDModel(pl.LightningModule):
         # Prepare decoder inputs
         # ==============================
         att_ctx_t_arr = _append_context(
-            tensors=[spk_rank_one_hot[:, 1:], emb_proj[:, 1:]],
-            cond=[self.att_spk_in, self.att_emb_in],
+            tensors=[spk_rank_one_hot[:, 1:], emb_proj[:, 1:], ist_emb[:, 1:]],
+            cond=[self.att_spk_in, self.att_emb_in, self.att_ist_in],
             b=batch_size,
             n=num_steps,
             device=f.device,
         ).unbind(1)
         dec_ctx_t_arr = (
             _append_context(
-                tensors=[spk_rank_one_hot[:, 1:], emb_proj[:, 1:]],
-                cond=[self.dec_spk_in, self.dec_emb_in],
+                tensors=[spk_rank_one_hot[:, 1:], emb_proj[:, 1:], ist_emb[:, 1:]],
+                cond=[self.dec_spk_in, self.dec_emb_in, self.dec_ist_in],
                 b=batch_size,
                 n=num_steps,
                 device=f.device,
@@ -189,8 +240,8 @@ class CDModel(pl.LightningModule):
         )
         lin_ctx_t_arr = (
             _append_context(
-                tensors=[emb_proj[:, 1:]],
-                cond=[self.lin_emb_in],
+                tensors=[emb_proj[:, 1:], ist_emb[:, 1:]],
+                cond=[self.lin_emb_in, self.lin_ist_in],
                 b=batch_size,
                 n=num_steps,
                 device=f.device,
@@ -283,8 +334,10 @@ class CDModel(pl.LightningModule):
 
         y_hat, _, _, _ = self(
             f=batch.features,
+            f_d_sides=batch.features_d_sides,
+            sides_lengths=batch.sides_lengths,
             conv_lengths=batch.conv_lengths,
-            spk_rank=batch.speaker_rank,
+            spk_rank=batch.speaker_side,
             segment_emb=batch.segment_embeddings,
             autoregressive=self.ar_train,
         )
@@ -297,9 +350,9 @@ class CDModel(pl.LightningModule):
             raise ValueError(f"Unknown output format {self.output}")
 
         if self.train_primary_speaker_only:
-            mask = batch.speaker_rank[:, 1:] == 1
+            mask = batch.speaker_side[:, 1:] == 1
         else:
-            mask = batch.speaker_rank[:, 1:] != 0
+            mask = batch.speaker_side[:, 1:] != 0
 
         loss = F.mse_loss(y_hat[mask], y[mask])
 
@@ -319,8 +372,10 @@ class CDModel(pl.LightningModule):
 
         y_hat, weights, _, _ = self(
             f=batch.features,
+            f_d_sides=batch.features_d_sides,
+            sides_lengths=batch.sides_lengths,
             conv_lengths=batch.conv_lengths,
-            spk_rank=batch.speaker_rank,
+            spk_rank=batch.speaker_side,
             segment_emb=batch.segment_embeddings,
             autoregressive=self.ar_val,
             return_h=True,
@@ -334,9 +389,9 @@ class CDModel(pl.LightningModule):
             raise ValueError(f"Unknown output format {self.output}")
 
         if self.train_primary_speaker_only:
-            mask = batch.speaker_rank[:, 1:] == 1
+            mask = batch.speaker_side[:, 1:] == 1
         else:
-            mask = batch.speaker_rank[:, 1:] != 0
+            mask = batch.speaker_side[:, 1:] != 0
 
         loss = F.mse_loss(y_hat[mask], y[mask])
 
@@ -352,7 +407,7 @@ class CDModel(pl.LightningModule):
         if self.global_rank == 0 and batch_idx == 0 and self.logger is not None:
             conv_length: int = int(batch.conv_lengths[0].item())
             w = weights[0, : conv_length - 1, :conv_length].squeeze().cpu().numpy()
-            sr = batch.speaker_rank[0, :conv_length].cpu().numpy()
+            sr = batch.speaker_side[0, :conv_length].cpu().numpy()
 
             fig_weights_1 = plot_weights(weights=w, spk_rank=sr, spk=1)
             fig_weights_2 = plot_weights(weights=w, spk_rank=sr, spk=2)
@@ -376,8 +431,10 @@ class CDModel(pl.LightningModule):
     def predict_step(self, batch: ConversationBatch, batch_idx: int):
         y_hat, weights, att, dec = self(
             f=batch.features,
+            f_d_sides=batch.features_d_sides,
+            sides_lengths=batch.sides_lengths,
             conv_lengths=batch.conv_lengths,
-            spk_rank=batch.speaker_rank,
+            spk_rank=batch.speaker_side,
             segment_emb=batch.segment_embeddings,
             autoregressive=self.ar_val,
             return_h=True,

@@ -11,13 +11,24 @@ def collate_fn(batch: list[ConversationBatch]):
     speaker_ids_all: list[Tensor] = []
     speaker_rank_all: list[Tensor] = []
     segment_embeddings_all: list[Tensor] = []
+    features_sides_all: dict[int, list[Tensor]] = {1: [], 2: []}
+    features_d_sides_all: dict[int, list[Tensor]] = {1: [], 2: []}
+    sides_lengths_all: dict[int, list[Tensor]] = {1: [], 2: []}
 
     for b in batch:
         features_all.append(b.features.squeeze(0))
         features_d_all.append(b.features_d.squeeze(0))
         conv_lengths_all.append(b.conv_lengths.squeeze(0))
         speaker_ids_all.append(b.speaker_ids.squeeze(0))
-        speaker_rank_all.append(b.speaker_rank.squeeze(0))
+        speaker_rank_all.append(b.speaker_side.squeeze(0))
+
+        features_sides_all[1].append(b.features_sides[1].squeeze(0))
+        features_sides_all[2].append(b.features_sides[2].squeeze(0))
+        features_d_sides_all[1].append(b.features_d_sides[1].squeeze(0))
+        features_d_sides_all[2].append(b.features_d_sides[2].squeeze(0))
+
+        sides_lengths_all[1].append(b.sides_lengths[1].squeeze(0))
+        sides_lengths_all[2].append(b.sides_lengths[2].squeeze(0))
 
         if b.segment_embeddings is not None:
             segment_embeddings_all.append(b.segment_embeddings.squeeze(0))
@@ -33,6 +44,18 @@ def collate_fn(batch: list[ConversationBatch]):
         features_d=nn.utils.rnn.pad_sequence(features_d_all, batch_first=True),
         conv_lengths=torch.stack(conv_lengths_all),
         speaker_ids=nn.utils.rnn.pad_sequence(speaker_ids_all, batch_first=True),
-        speaker_rank=nn.utils.rnn.pad_sequence(speaker_rank_all, batch_first=True),
+        speaker_side=nn.utils.rnn.pad_sequence(speaker_rank_all, batch_first=True),
         segment_embeddings=segment_embeddings,
+        features_sides={
+            1: nn.utils.rnn.pad_sequence(features_sides_all[1], batch_first=True),
+            2: nn.utils.rnn.pad_sequence(features_sides_all[2], batch_first=True),
+        },
+        features_d_sides={
+            1: nn.utils.rnn.pad_sequence(features_d_sides_all[1], batch_first=True),
+            2: nn.utils.rnn.pad_sequence(features_d_sides_all[2], batch_first=True),
+        },
+        sides_lengths={
+            1: torch.stack(sides_lengths_all[1]),
+            2: torch.stack(sides_lengths_all[2]),
+        },
     )
