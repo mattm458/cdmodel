@@ -50,7 +50,7 @@ class ConversationDataset(Dataset):
                 primary_speaker_selection_method = "second"
 
         # Load the conversation ID
-        conv_id: Final[int] = self.conv_ids[i]
+        conv_id: Final[int] = int(self.conv_ids[i])
 
         # Load the conversation data
         with open(path.join(self.dataset_dir, "segments", f"{conv_id}.json")) as infile:
@@ -94,6 +94,7 @@ class ConversationDataset(Dataset):
                 segment_embeddings = F.pad(segment_embeddings, (0, 0, 1, 0))
 
         return ConversationBatch(
+            conv_ids=[conv_id],
             features=features.unsqueeze(0),
             features_d=features_d.unsqueeze(0),
             conv_lengths=torch.tensor([len(features)]),

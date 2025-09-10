@@ -4,6 +4,7 @@ from torch import Tensor
 
 
 class ConversationBatch(NamedTuple):
+    conv_ids: list[int]
     features: Tensor
     features_sides: dict[int, Tensor]
     features_d: Tensor
