@@ -16,6 +16,7 @@ def collate_fn(batch: list[ConversationBatch]):
     sides_lengths_all: dict[int, list[Tensor]] = {1: [], 2: []}
 
     for b in batch:
+        conv_ids_all.extend(b.conv_ids)
         features_all.append(b.features.squeeze(0))
         features_d_all.append(b.features_d.squeeze(0))
         conv_lengths_all.append(b.conv_lengths.squeeze(0))
@@ -40,6 +41,7 @@ def collate_fn(batch: list[ConversationBatch]):
         )
 
     return ConversationBatch(
+        conv_ids=conv_ids_all,
         features=nn.utils.rnn.pad_sequence(features_all, batch_first=True),
         features_d=nn.utils.rnn.pad_sequence(features_d_all, batch_first=True),
         conv_lengths=torch.stack(conv_lengths_all),
