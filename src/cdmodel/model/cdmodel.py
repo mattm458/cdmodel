@@ -317,6 +317,7 @@ class CDModel(pl.LightningModule):
                 att_ctx=att_ctx_t_arr[i],
                 dec_ctx=dec_ctx_t_arr[i],
                 lin_ctx=lin_ctx_t_arr[i],
+                precomputed_keys=precomputed_keys,
             )
 
             y_hat_all[:, i] = y_hat_t.squeeze(1)

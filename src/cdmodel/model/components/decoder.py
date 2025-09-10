@@ -87,6 +87,7 @@ class DecoderCell(nn.Module):
         dec_ctx: Tensor,
         lin_ctx: Tensor,
         mask: Optional[Tensor] = None,
+        precomputed_keys: Optional[Tensor] = None,
     ):
         if not self.flattened:
             self.rnn.flatten_parameters()
