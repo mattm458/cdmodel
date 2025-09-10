@@ -19,6 +19,7 @@ class DecoderCell(nn.Module):
         lin_h_dim: int,
         features: list[str],
         skip_conn: bool,
+        learn_rnn_initial_state: bool,
     ):
         super().__init__()
 
@@ -34,6 +35,12 @@ class DecoderCell(nn.Module):
 
         self.attention = AdditiveAttention(
             hidden_dim=in_dim, query_dim=(h_dim * num_layers) + att_ctx_dim
+        )
+
+        self.h_initial: nn.Parameter | None = (
+            nn.Parameter(torch.randn(num_layers, h_dim))
+            if learn_rnn_initial_state
+            else None
         )
         self.rnn = nn.GRU(
             in_dim + dec_ctx_dim, h_dim, num_layers=num_layers, batch_first=True
@@ -65,7 +72,12 @@ class DecoderCell(nn.Module):
             )
 
     def init(self, batch_size: int, device) -> Tensor:
-        return torch.zeros(self.num_layers, batch_size, self.hidden_size, device=device)
+        if self.h_initial is None:
+            return torch.zeros(
+                self.num_layers, batch_size, self.hidden_size, device=device
+            )
+        else:
+            return self.h_initial.unsqueeze(1).expand(-1, batch_size, -1)
 
     def forward(
         self,

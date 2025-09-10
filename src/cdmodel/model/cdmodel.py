@@ -57,6 +57,7 @@ class CDModel(pl.LightningModule):
         dec_skip_conn: bool,
         emb_dim: int = 0,
         emb_proj_dim: int = 0,
+        learn_rnn_initial_state: bool = False,
         ist: bool = False,
         ist_tokens: int = 0,
         ist_dim: int = 0,
@@ -104,11 +105,17 @@ class CDModel(pl.LightningModule):
         self.enc: EncoderType
         if ar_train or ar_val:
             self.enc = EncoderCell(
-                input_dim=enc_in_dim, hidden_dim=enc_h_dim, num_layers=enc_layers
+                input_dim=enc_in_dim,
+                hidden_dim=enc_h_dim,
+                num_layers=enc_layers,
+                learn_rnn_initial_state=learn_rnn_initial_state,
             )
         else:
             self.enc = Encoder(
-                input_dim=enc_in_dim, hidden_dim=enc_h_dim, num_layers=enc_layers
+                input_dim=enc_in_dim,
+                hidden_dim=enc_h_dim,
+                num_layers=enc_layers,
+                learn_rnn_initial_state=learn_rnn_initial_state,
             )
 
         # Decoder
@@ -136,6 +143,7 @@ class CDModel(pl.LightningModule):
             lin_h_dim=lin_h_dim,
             features=feature_names,
             skip_conn=dec_skip_conn,
+            learn_rnn_initial_state=learn_rnn_initial_state,
         )
 
         # Embeddings
