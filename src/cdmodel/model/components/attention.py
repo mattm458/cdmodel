@@ -9,9 +9,9 @@ class AdditiveAttention(nn.Module):
     def __init__(self, hidden_dim: int, query_dim: int):
         super().__init__()
 
-        self.w = nn.Linear(query_dim, hidden_dim,bias=False)
-        self.u = nn.Linear(hidden_dim, hidden_dim,bias=False)
-        self.v = nn.Linear(hidden_dim, 1,bias=False)
+        self.w = nn.Linear(query_dim, hidden_dim, bias=False)
+        self.u = nn.Linear(hidden_dim, hidden_dim, bias=False)
+        self.v = nn.Linear(hidden_dim, 1, bias=False)
 
     def precompute_keys(self, keys: Tensor) -> Tensor:
         return self.u(keys)
