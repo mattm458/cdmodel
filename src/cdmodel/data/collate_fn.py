@@ -5,6 +5,7 @@ from cdmodel.common.data import ConversationBatch
 
 
 def collate_fn(batch: list[ConversationBatch]):
+    conv_ids_all: list[int] = []
     features_all: list[Tensor] = []
     features_d_all: list[Tensor] = []
     conv_lengths_all: list[Tensor] = []
