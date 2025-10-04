@@ -21,6 +21,7 @@ from cdmodel.model.types import (
     IstInputs,
     SpeakerInputs,
 )
+from cdmodel.model.util import get_history_mask
 from cdmodel.util.visualization import plot_weights
 
 
