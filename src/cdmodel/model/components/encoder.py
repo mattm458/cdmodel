@@ -25,11 +25,11 @@ class Encoder(EncoderType):
     ):
         super().__init__()
 
-        self.h_initial: nn.Parameter | None = (
-            nn.Parameter(torch.randn(num_layers, hidden_dim))
-            if learn_rnn_initial_state
-            else None
-        )
+        self.h_initial: nn.Parameter | None = None
+        if learn_rnn_initial_state:
+            print("Encoder: Learning RNN initial state")
+            self.h_initial = nn.Parameter(torch.randn(num_layers, hidden_dim))
+
         self.rnn = nn.GRU(
             input_dim, hidden_dim, num_layers=num_layers, batch_first=True
         )
@@ -70,6 +70,7 @@ class EncoderCell(EncoderType):
 
         self.h_initial: nn.Parameter | None = None
         if learn_rnn_initial_state:
+            print("EncoderCell: Learning RNN initial state")
             self.h_initial = nn.Parameter(torch.randn(num_layers, hidden_dim))
 
         self.rnn = nn.GRU(
@@ -78,24 +79,26 @@ class EncoderCell(EncoderType):
 
     def init(self, input: Tensor, lengths: Tensor) -> tuple[Tensor, Tensor]:
         batch_size, num_steps, _ = input.shape
-        return (
+
+        history = torch.zeros(
+            batch_size,
+            num_steps - 1,
+            self.hidden_size,
+            device=input.device,
+        )
+
+        h = (
             torch.zeros(
+                self.num_layers,
                 batch_size,
-                num_steps - 1,
                 self.hidden_size,
                 device=input.device,
-            ),
-            (
-                torch.zeros(
-                    self.num_layers,
-                    batch_size,
-                    self.hidden_size,
-                    device=input.device,
-                )
-                if self.h_initial is None
-                else self.h_initial.unsqueeze(1).expand(-1, batch_size, -1)
-            ),
+            )
+            if self.h_initial is None
+            else self.h_initial.unsqueeze(1).expand(-1, batch_size, -1)
         )
+
+        return history, h
 
     def forward(self, i: int, history: Tensor, h: Tensor, input: Tensor) -> Tensor:
         x, h = self.rnn(input, h)
