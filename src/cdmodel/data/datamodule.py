@@ -1,12 +1,12 @@
 from os import path
 from typing import Final
 
-import numpy as np
 import pandas as pd
 import torch
 from lightning import LightningDataModule
 from sklearn.model_selection import train_test_split
-from torch.utils.data import DataLoader, random_split
+from torch import Tensor
+from torch.utils.data import DataLoader
 
 from cdmodel.data.collate_fn import collate_fn
 from cdmodel.data.dataset import ConversationDataset, PrimarySpeakerSelectionStrategy
@@ -54,17 +54,28 @@ class ConversationDataModule(LightningDataModule):
         )
         self.num_workers: Final[int] = num_workers
 
+        self.norm_z_mean: Tensor | None = None
+        self.norm_z_std: Tensor | None = None
+
     def prepare_data(self):
         print("Preparing data")
 
     def setup(self, stage: str):
-        self.conv_ids_train, self.conv_ids_val, self.conv_ids_test = split_ids(
-            set(
-                pd.read_csv(path.join(self.dataset_dir, "data.csv"), engine="pyarrow")[
-                    "id"
-                ].unique()
-            )
-        )
+        df = pd.read_csv(path.join(self.dataset_dir, "data_all.csv"), engine="pyarrow")
+        ids = set(df["conv_id"].unique())
+        self.conv_ids_train, self.conv_ids_val, self.conv_ids_test = split_ids(ids)
+
+        if self.normalization == "zscore":
+            self.norm_z_mean = torch.from_numpy(
+                df.loc[
+                    df.conv_id.isin(self.conv_ids_train), self.features
+                ].values.astype("float32")
+            ).mean(0)
+            self.norm_z_std = torch.from_numpy(
+                df.loc[
+                    df.conv_id.isin(self.conv_ids_train), self.features
+                ].values.astype("float32")
+            ).std(0)
 
     def train_dataloader(self) -> DataLoader:
         return DataLoader(
@@ -76,6 +87,8 @@ class ConversationDataModule(LightningDataModule):
                 embeddings=self.embeddings,
                 normalization=self.normalization,
                 primary_speaker_selection=self.primary_speaker_selection,
+                norm_z_mean=self.norm_z_mean,
+                norm_z_std=self.norm_z_std,
             ),
             batch_size=self.batch_size,
             pin_memory=True,
@@ -96,6 +109,8 @@ class ConversationDataModule(LightningDataModule):
                 embeddings=self.embeddings,
                 normalization=self.normalization,
                 primary_speaker_selection=self.primary_speaker_selection,
+                norm_z_mean=self.norm_z_mean,
+                norm_z_std=self.norm_z_std,
             ),
             batch_size=self.batch_size,
             pin_memory=True,
@@ -116,6 +131,8 @@ class ConversationDataModule(LightningDataModule):
                 embeddings=self.embeddings,
                 normalization=self.normalization,
                 primary_speaker_selection=self.primary_speaker_selection,
+                norm_z_mean=self.norm_z_mean,
+                norm_z_std=self.norm_z_std,
             ),
             batch_size=self.batch_size,
             pin_memory=True,

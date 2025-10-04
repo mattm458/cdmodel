@@ -1,7 +1,7 @@
 from os import path
-from typing import Final, Literal
+from typing import Final, Literal, Optional
 
-import orjson
+import pandas as pd
 import torch
 from torch import Tensor
 from torch.nn import functional as F
@@ -22,6 +22,8 @@ class ConversationDataset(Dataset):
         embeddings: str | None,
         normalization: str,
         primary_speaker_selection: PrimarySpeakerSelectionStrategy,
+        norm_z_mean: Optional[Tensor] = None,
+        norm_z_std: Optional[Tensor] = None,
     ):
         self.dataset_dir: Final[str] = dataset_dir
         self.features: list[str] = features
@@ -32,6 +34,9 @@ class ConversationDataset(Dataset):
         self.primary_speaker_selection: Final[PrimarySpeakerSelectionStrategy] = (
             primary_speaker_selection
         )
+
+        self.norm_z_mean: Final[Tensor | None] = norm_z_mean
+        self.norm_z_std: Final[Tensor | None] = norm_z_std
 
     def __len__(self) -> int:
         if self.primary_speaker_selection == "both":
@@ -50,30 +55,39 @@ class ConversationDataset(Dataset):
                 primary_speaker_selection_method = "second"
 
         # Load the conversation ID
-        conv_id: Final[int] = int(self.conv_ids[i])
+        conv_id: Final[int] = self.conv_ids[i]
 
         # Load the conversation data
-        with open(path.join(self.dataset_dir, "segments", f"{conv_id}.json")) as infile:
-            conv_data: Final[dict] = orjson.loads(infile.read())
+        conv_df = pd.read_csv(path.join(self.dataset_dir, "csv", f"{conv_id}.csv"))
 
         # Load embeddings, if necessary
         segment_embeddings: Tensor | None = None
         if self.embeddings == "roberta":
             segment_embeddings = torch.load(
-                path.join(self.dataset_dir, "roberta", f"{conv_id}-embeddings.pt"),
+                path.join(self.dataset_dir, "roberta", f"{conv_id}.pt"),
                 weights_only=True,
             )
 
         # Retrieve data from the loaded conversation
-        features: Tensor = torch.tensor([conv_data[f] for f in self.features]).T
-        speaker_ids: Tensor = torch.tensor(conv_data["speaker_id"])
+        features = torch.from_numpy(conv_df[self.features].values.astype("float32"))
+        speaker_ids = torch.from_numpy(conv_df.spk_id.values)
 
-        for speaker_id in speaker_ids.unique():
-            speaker_id_mask = speaker_ids == speaker_id
-            f = features[speaker_id_mask]
-            features[speaker_id_mask] = (f - f.mean(0)) / f.std(0)
-
-        features_d = features.diff(dim=0, prepend=torch.zeros(1, len(self.features)))
+        # Normalization
+        if self.normalization == "zscore":
+            if self.norm_z_mean is None or self.norm_z_std is None:
+                raise Exception(
+                    "If normalization method is zscore, norm_z_mean and norm_z_std must be given!"
+                )
+            features = (features - self.norm_z_mean) / self.norm_z_std
+        elif self.normalization == "zscore_conv":
+            features = (features - features.mean(0)) / features.std(0)
+        elif self.normalization == "zscore_conv_speaker":
+            for speaker_id in speaker_ids.unique():
+                speaker_id_mask = speaker_ids == speaker_id
+                f = features[speaker_id_mask]
+                features[speaker_id_mask] = (f - f.mean(0)) / f.std(0)
+        else:
+            raise Exception(f"Unknown normalization method {self.normalization}")
 
         # Assign labels of 1 and 2 for primary and secondary speaker, respectively,
         # according to the selection criteria
@@ -82,6 +96,28 @@ class ConversationDataset(Dataset):
             if primary_speaker_selection_method == "first"
             else torch.where(speaker_ids != speaker_ids[0], 1, 2)
         )
+
+        # Feature deltas are computed as the difference between features at each timestep.
+        features_d = features.diff(dim=0, prepend=torch.zeros(1, len(self.features)))
+
+        # Computing feature deltas at turn exchanges
+        features_d_exchanges = features.clone()
+        # Normalize both sides of the conversation
+        for speaker_id in speaker_ids.unique():
+            speaker_id_mask = speaker_ids == speaker_id
+            f = features_d_exchanges[speaker_id_mask]
+            features_d_exchanges[speaker_id_mask] = (f - f.mean(0)) / f.std(0)
+        # Compute the delta
+        features_d_exchanges = features_d.diff(dim=0)
+        speaker_side_exc = speaker_side.diff() != 0
+        features_d_sides_exchanges = {
+            1: features_d_exchanges[
+                ((speaker_side[1:] == 1) & speaker_side_exc)
+            ].unsqueeze(0),
+            2: features_d_exchanges[
+                ((speaker_side[1:] == 2) & speaker_side_exc)
+            ].unsqueeze(0),
+        }
 
         # Add a leading 0 to all data if requested
         if self.zero_pad:
@@ -112,5 +148,10 @@ class ConversationDataset(Dataset):
             sides_lengths={
                 1: torch.tensor([(speaker_side == 1).sum()]),
                 2: torch.tensor([(speaker_side == 2).sum()]),
+            },
+            features_d_sides_exchanges=features_d_sides_exchanges,
+            features_d_sides_exchanges_lengths={
+                1: torch.tensor([features_d_sides_exchanges[1].shape[1]]),
+                2: torch.tensor([features_d_sides_exchanges[2].shape[1]]),
             },
         )

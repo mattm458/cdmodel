@@ -9,6 +9,8 @@ class ConversationBatch(NamedTuple):
     features_sides: dict[int, Tensor]
     features_d: Tensor
     features_d_sides: dict[int, Tensor]
+    features_d_sides_exchanges: dict[int, Tensor]
+    features_d_sides_exchanges_lengths: dict[int, Tensor]
     sides_lengths: dict[int, Tensor]
     conv_lengths: Tensor
     speaker_ids: Tensor
