@@ -1,10 +1,5 @@
-from typing import Final, Literal
+from typing import Final
 
-import matplotlib
-
-matplotlib.use("Agg")
-
-import matplotlib.pyplot as plt
 import torch
 from lightning import pytorch as pl
 from torch import Tensor, nn
