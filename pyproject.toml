@@ -21,10 +21,10 @@ dependencies = [
     "librosa==0.11.0",
     "lightning==2.5.5",
     "matplotlib==3.10.6",
-    "nltk==3.9.1",
+    "nltk==3.9.2",
     "numpy==2.2.6",
     "orjson==3.11.3",
-    "pandas==2.3.2",
+    "pandas==2.3.3",
     "praat-parselmouth==0.4.6",
     "pyarrow==21.0.0",
     "pytest==8.4.2",
@@ -34,7 +34,7 @@ dependencies = [
     "statsmodels==0.14.5",
     "tensorboard==2.20.0",
     "torch==2.8.0",
-    "transformers==4.56.2"
+    "transformers==4.57.0"
 ]
 
 [tool.setuptools.package-data]
