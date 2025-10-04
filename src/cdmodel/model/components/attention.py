@@ -1,4 +1,4 @@
-from typing import Optional
+from typing import Optional, Final
 
 import torch
 from torch import Tensor, nn
@@ -6,12 +6,14 @@ from torch.nn import functional as F
 
 
 class AdditiveAttention(nn.Module):
-    def __init__(self, hidden_dim: int, query_dim: int):
+    def __init__(self, hidden_dim: int, query_dim: int, activation: str = "softmax"):
         super().__init__()
 
         self.w = nn.Linear(query_dim, hidden_dim, bias=False)
         self.u = nn.Linear(hidden_dim, hidden_dim, bias=False)
         self.v = nn.Linear(hidden_dim, 1, bias=False)
+
+        self.activation: Final[str] = activation
 
     def precompute_keys(self, keys: Tensor) -> Tensor:
         return self.u(keys)
@@ -29,12 +31,24 @@ class AdditiveAttention(nn.Module):
             scores = self.v(torch.tanh(self.w(query.unsqueeze(1)) + self.u(keys)))
 
         if mask is None:
-            weights = F.softmax(scores, dim=1)
+            if self.activation == "softmax":
+                weights = F.softmax(scores, dim=1)
+            elif self.activation == "sigmoid":
+                weights = F.sigmoid(scores)
+            else:
+                raise Exception(f"Unknown attention activation {self.activation}!")
         else:
-            zero_fill_mask = ~mask.unsqueeze(-1)
-            scores = scores.masked_fill(zero_fill_mask, -torch.inf)
-            weights = F.softmax(scores, dim=1)
-            weights = weights.masked_fill(zero_fill_mask, 0.0)
+            if self.activation == "softmax":
+                zero_fill_mask = ~mask.unsqueeze(-1)
+                scores = scores.masked_fill(zero_fill_mask, -torch.inf)
+                weights = F.softmax(scores, dim=1)
+                weights = weights.masked_fill(zero_fill_mask, 0.0)
+            elif self.activation == "sigmoid":
+                zero_fill_mask = ~mask.unsqueeze(-1)
+                scores = scores.masked_fill(zero_fill_mask, -torch.inf)
+                weights = F.sigmoid(scores)
+            else:
+                raise Exception(f"Unknown attention activation {self.activation}!")
 
         context = weights.permute(0, 2, 1) @ keys
         return context, weights
