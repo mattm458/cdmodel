@@ -179,7 +179,7 @@ class CDModel(pl.LightningModule):
         f_d_sides: dict[int, Tensor],
         sides_lengths: dict[int, Tensor],
         conv_lengths: Tensor,
-        spk_rank: Tensor,
+        spk_side: Tensor,
         segment_emb: Tensor | None,
         autoregressive: bool,
         return_h: bool = False,
@@ -194,33 +194,31 @@ class CDModel(pl.LightningModule):
 
         # Prepare various input data
         # ==============================
-        spk_rank_one_hot = F.one_hot(spk_rank)[:, :, 1:]
-        spk_is_primary = spk_rank == 1
-        spk_is_secondary = spk_rank == 2
-        spk_is_primary_t_arr = spk_is_primary.unbind(1)
+        spk_side_onehot = F.one_hot(spk_side)[:, :, 1:]
+        spk_is_1 = spk_side == 1
+        spk_is_2 = spk_side == 2
+        spk_is_1_t_arr = spk_is_1.unbind(1)
 
         # Prepare IST embedding
         if self.ist_enc is not None:
             ist_emb = torch.zeros(batch_size, num_steps, self.ist_dim, device=device)
 
-            ist_primary, ist_primary_w = self.ist_enc(f_d_sides[1], sides_lengths[1])
-            ist_secondary, ist_secondary_w = self.ist_enc(
-                f_d_sides[2], sides_lengths[2]
-            )
+            ist_1, ist_1_w = self.ist_enc(f_d_sides[1], sides_lengths[1])
+            ist_2, ist_2_w = self.ist_enc(f_d_sides[2], sides_lengths[2])
 
-            ist_emb[spk_is_primary] = ist_primary.type_as(ist_emb)[:, None, :].expand(
+            ist_emb[spk_is_1] = ist_1.type_as(ist_emb)[:, None, :].expand(
                 -1, num_steps, -1
-            )[spk_is_primary]
-            ist_emb[spk_is_secondary] = ist_secondary.type_as(ist_emb)[
-                :, None, :
-            ].expand(-1, num_steps, -1)[spk_is_secondary]
+            )[spk_is_1]
+            ist_emb[spk_is_2] = ist_2.type_as(ist_emb)[:, None, :].expand(
+                -1, num_steps, -1
+            )[spk_is_2]
         else:
             ist_emb = torch.zeros(batch_size, num_steps, 0, device=device)
 
         # Prepare encoder inputs
         # ==============================
         enc_in = _append_context(
-            tensors=[f, spk_rank_one_hot, emb_proj],
+            tensors=[f, spk_side_onehot, emb_proj],
             cond=[True, self.enc_spk_in, self.enc_emb_in],
             b=batch_size,
             n=num_steps,
@@ -231,7 +229,7 @@ class CDModel(pl.LightningModule):
         # Prepare decoder inputs
         # ==============================
         att_ctx_t_arr = _append_context(
-            tensors=[spk_rank_one_hot[:, 1:], emb_proj[:, 1:], ist_emb[:, 1:]],
+            tensors=[spk_side_onehot[:, 1:], emb_proj[:, 1:], ist_emb[:, 1:]],
             cond=[self.att_spk_in, self.att_emb_in, self.att_ist_in],
             b=batch_size,
             n=num_steps,
@@ -239,7 +237,7 @@ class CDModel(pl.LightningModule):
         ).unbind(1)
         dec_ctx_t_arr = (
             _append_context(
-                tensors=[spk_rank_one_hot[:, 1:], emb_proj[:, 1:], ist_emb[:, 1:]],
+                tensors=[spk_side_onehot[:, 1:], emb_proj[:, 1:], ist_emb[:, 1:]],
                 cond=[self.dec_spk_in, self.dec_emb_in, self.dec_ist_in],
                 b=batch_size,
                 n=num_steps,
@@ -317,7 +315,7 @@ class CDModel(pl.LightningModule):
             # Handle autoregressive training if enabled
             enc_in_t = enc_in_arr[i + 1]
             if autoregressive:
-                spk_is_primary_t = spk_is_primary_t_arr[i + 1]
+                spk_is_primary_t = spk_is_1_t_arr[i + 1]
                 enc_in_t[spk_is_primary_t, :, : self.num_features] = y_hat_t.detach()[
                     spk_is_primary_t
                 ].type_as(enc_in_t)
@@ -338,7 +336,7 @@ class CDModel(pl.LightningModule):
             f_d_sides=batch.features_d_sides,
             sides_lengths=batch.sides_lengths,
             conv_lengths=batch.conv_lengths,
-            spk_rank=batch.speaker_side,
+            spk_side=batch.speaker_side,
             segment_emb=batch.segment_embeddings,
             autoregressive=self.ar_train,
         )
@@ -382,7 +380,7 @@ class CDModel(pl.LightningModule):
             f_d_sides=batch.features_d_sides,
             sides_lengths=batch.sides_lengths,
             conv_lengths=batch.conv_lengths,
-            spk_rank=batch.speaker_side,
+            spk_side=batch.speaker_side,
             segment_emb=batch.segment_embeddings,
             autoregressive=self.ar_val,
             return_h=True,
@@ -414,24 +412,32 @@ class CDModel(pl.LightningModule):
         if self.global_rank == 0 and batch_idx == 0 and self.logger is not None:
             conv_length: int = int(batch.conv_lengths[0].item())
             w = weights[0, : conv_length - 1, :conv_length].squeeze().cpu().numpy()
-            sr = batch.speaker_side[0, :conv_length].cpu().numpy()
+            spk_side = batch.speaker_side[0, :conv_length].cpu().numpy()
 
-            fig_weights_1 = plot_weights(weights=w, spk_rank=sr, spk=1)
-            fig_weights_2 = plot_weights(weights=w, spk_rank=sr, spk=2)
-            fig_weights_both = plot_weights(weights=w, spk_rank=sr, spk=None)
-            self.logger.experiment.add_figure(
-                "weights_1", fig_weights_1, global_step=self.global_step
+            plot_weights(
+                weights=w,
+                spk_side=spk_side,
+                spk=1,
+                title="weights_1",
+                logger=self.logger.experiment,
+                global_step=self.global_step,
             )
-            self.logger.experiment.add_figure(
-                "weights_2", fig_weights_2, global_step=self.global_step
+            plot_weights(
+                weights=w,
+                spk_side=spk_side,
+                spk=2,
+                title="weights_2",
+                logger=self.logger.experiment,
+                global_step=self.global_step,
             )
-            self.logger.experiment.add_figure(
-                "weights_both", fig_weights_both, global_step=self.global_step
+            plot_weights(
+                weights=w,
+                spk_side=spk_side,
+                spk=None,
+                title="weights_both",
+                logger=self.logger.experiment,
+                global_step=self.global_step,
             )
-
-            plt.close(fig_weights_1)
-            plt.close(fig_weights_2)
-            plt.close(fig_weights_both)
 
         return loss
 
@@ -447,7 +453,7 @@ class CDModel(pl.LightningModule):
             f_d_sides=batch.features_d_sides,
             sides_lengths=batch.sides_lengths,
             conv_lengths=batch.conv_lengths,
-            spk_rank=batch.speaker_side,
+            spk_side=batch.speaker_side,
             segment_emb=batch.segment_embeddings,
             autoregressive=self.ar_val,
             return_h=True,
