@@ -22,17 +22,8 @@ from cdmodel.model.types import (
     IstInputs,
     SpeakerInputs,
 )
-from cdmodel.model.util import get_history_mask
+from cdmodel.model.util import append_context, get_history_mask
 from cdmodel.util.visualization import plot_weights
-
-
-def _append_context(
-    tensors: list[Tensor | None], cond: list[bool], b: int, n: int, device
-):
-    lst = [t for (t, c) in zip(tensors, cond) if c and t is not None]
-    if len(lst) == 0:
-        return torch.zeros(b, n, 0, device=device)
-    return torch.concat(lst, -1)
 
 
 class CDModel(pl.LightningModule):
@@ -217,7 +208,7 @@ class CDModel(pl.LightningModule):
 
         # Prepare encoder inputs
         # ==============================
-        enc_in = _append_context(
+        enc_in = append_context(
             tensors=[f, spk_side_onehot, emb_proj],
             cond=[True, self.enc_spk_in, self.enc_emb_in],
             b=batch_size,
@@ -228,7 +219,7 @@ class CDModel(pl.LightningModule):
 
         # Prepare decoder inputs
         # ==============================
-        att_ctx_t_arr = _append_context(
+        att_ctx_t_arr = append_context(
             tensors=[spk_side_onehot[:, 1:], emb_proj[:, 1:], ist_emb[:, 1:]],
             cond=[self.att_spk_in, self.att_emb_in, self.att_ist_in],
             b=batch_size,
@@ -236,7 +227,7 @@ class CDModel(pl.LightningModule):
             device=f.device,
         ).unbind(1)
         dec_ctx_t_arr = (
-            _append_context(
+            append_context(
                 tensors=[spk_side_onehot[:, 1:], emb_proj[:, 1:], ist_emb[:, 1:]],
                 cond=[self.dec_spk_in, self.dec_emb_in, self.dec_ist_in],
                 b=batch_size,
@@ -247,7 +238,7 @@ class CDModel(pl.LightningModule):
             .unbind(1)
         )
         lin_ctx_t_arr = (
-            _append_context(
+            append_context(
                 tensors=[emb_proj[:, 1:], ist_emb[:, 1:]],
                 cond=[self.lin_emb_in, self.lin_ist_in],
                 b=batch_size,
