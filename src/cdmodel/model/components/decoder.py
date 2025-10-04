@@ -37,10 +37,16 @@ class DecoderCell(nn.Module):
             hidden_dim=in_dim, query_dim=(h_dim * num_layers) + att_ctx_dim
         )
 
-        self.h_initial: nn.Parameter | None = None
         if learn_rnn_initial_state:
             print("Decoder: Learning RNN initial state")
-            self.h_initial = nn.Parameter(torch.randn(num_layers, h_dim))
+        self.h_initial = nn.Parameter(
+            (
+                torch.randn(num_layers, 1, h_dim)
+                if learn_rnn_initial_state
+                else torch.zeros(num_layers, 1, h_dim)
+            ),
+            requires_grad=learn_rnn_initial_state,
+        )
 
         self.rnn = nn.GRU(
             in_dim + dec_ctx_dim, h_dim, num_layers=num_layers, batch_first=True
@@ -72,12 +78,7 @@ class DecoderCell(nn.Module):
             )
 
     def init(self, batch_size: int, device) -> Tensor:
-        if self.h_initial is None:
-            return torch.zeros(
-                self.num_layers, batch_size, self.hidden_size, device=device
-            )
-        else:
-            return self.h_initial.unsqueeze(1).expand(-1, batch_size, -1).contiguous()
+        return self.h_initial.expand(-1, batch_size, -1).contiguous()
 
     def forward(
         self,

@@ -91,8 +91,8 @@ class CDModel(pl.LightningModule):
                 in_dim=self.num_features,
                 num_tokens=ist_tokens,
                 token_dim=ist_dim,
-                h_dim=ist_h_dim,
-                layers=ist_layers,
+                hidden_dim=ist_h_dim,
+                num_layers=ist_layers,
                 learn_rnn_initial_state=learn_rnn_initial_state,
             )
 

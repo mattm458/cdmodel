@@ -25,17 +25,23 @@ class Encoder(EncoderType):
     ):
         super().__init__()
 
-        self.h_initial: nn.Parameter | None = None
         if learn_rnn_initial_state:
             print("Encoder: Learning RNN initial state")
-            self.h_initial = nn.Parameter(torch.randn(num_layers, hidden_dim))
+        self.h_initial = nn.Parameter(
+            (
+                torch.randn(num_layers, 1, hidden_dim)
+                if learn_rnn_initial_state
+                else torch.zeros(num_layers, 1, hidden_dim)
+            ),
+            requires_grad=learn_rnn_initial_state,
+        )
 
         self.rnn = nn.GRU(
             input_dim, hidden_dim, num_layers=num_layers, batch_first=True
         )
 
     def init(self, input: Tensor, lengths: Tensor) -> tuple[Tensor, Tensor]:
-        batch_size = input.shape[0]
+        batch_size: Final[int] = input.shape[0]
 
         x = nn.utils.rnn.pack_padded_sequence(
             input=input[:, :-1],
@@ -43,10 +49,8 @@ class Encoder(EncoderType):
             batch_first=True,
             enforce_sorted=False,
         )
-        if self.h_initial is not None:
-            x, h = self.rnn(x, self.h_initial.unsqueeze(1).expand(-1, batch_size, -1))
-        else:
-            x, h = self.rnn(x)
+
+        x, h = self.rnn(x, self.h_initial.expand(-1, batch_size, -1))
 
         history, _ = nn.utils.rnn.pad_packed_sequence(x, batch_first=True)
         return history, h
@@ -68,10 +72,16 @@ class EncoderCell(EncoderType):
         self.hidden_size: Final[int] = hidden_dim
         self.num_layers: Final[int] = num_layers
 
-        self.h_initial: nn.Parameter | None = None
         if learn_rnn_initial_state:
             print("EncoderCell: Learning RNN initial state")
-            self.h_initial = nn.Parameter(torch.randn(num_layers, hidden_dim))
+        self.h_initial = nn.Parameter(
+            (
+                torch.randn(num_layers, 1, hidden_dim)
+                if learn_rnn_initial_state
+                else torch.zeros(num_layers, 1, hidden_dim)
+            ),
+            requires_grad=learn_rnn_initial_state,
+        )
 
         self.rnn = nn.GRU(
             input_dim, hidden_dim, num_layers=num_layers, batch_first=True
@@ -87,16 +97,7 @@ class EncoderCell(EncoderType):
             device=input.device,
         )
 
-        h = (
-            torch.zeros(
-                self.num_layers,
-                batch_size,
-                self.hidden_size,
-                device=input.device,
-            )
-            if self.h_initial is None
-            else self.h_initial.unsqueeze(1).expand(-1, batch_size, -1)
-        )
+        h = self.h_initial.expand(-1, batch_size, -1)
 
         return history, h
 

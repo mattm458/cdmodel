@@ -11,8 +11,8 @@ class ISTEncoder(nn.Module):
         in_dim: int,
         num_tokens: int,
         token_dim: int,
-        h_dim: int,
-        layers: int,
+        hidden_dim: int,
+        num_layers: int,
         learn_rnn_initial_state: bool,
     ):
         super().__init__()
@@ -20,21 +20,29 @@ class ISTEncoder(nn.Module):
         self.tokens = nn.Parameter(torch.randn(num_tokens, token_dim))
         print("tokens", self.tokens.shape)
 
-        self.h_initial: nn.Parameter | None = (
-            nn.Parameter(torch.randn(layers * 2, 1, h_dim // (layers * 2)))
-            if learn_rnn_initial_state
-            else None
+        if learn_rnn_initial_state:
+            print("ISTEncoder: Learning RNN initial state")
+        self.h_initial = nn.Parameter(
+            (
+                torch.randn(num_layers, 1, hidden_dim)
+                if learn_rnn_initial_state
+                else torch.zeros(num_layers, 1, hidden_dim)
+            ),
+            requires_grad=learn_rnn_initial_state,
         )
-
         self.rnn = nn.GRU(
             in_dim,
-            h_dim // (layers * 2),
+            hidden_dim // 2,
             bidirectional=True,
             batch_first=True,
-            num_layers=layers,
+            num_layers=num_layers,
         )
 
-        self.attention = AdditiveAttention(hidden_dim=token_dim, query_dim=h_dim)
+        self.attention = AdditiveAttention(
+            hidden_dim=token_dim,
+            query_dim=(hidden_dim * num_layers),
+            activation="sigmoid",
+        )
 
     def forward(self, x: Tensor, lengths: Tensor) -> tuple[Tensor, Tensor]:
         batch_size = x.shape[0]
@@ -42,18 +50,13 @@ class ISTEncoder(nn.Module):
         x_packed = nn.utils.rnn.pack_padded_sequence(
             x, lengths.cpu(), batch_first=True, enforce_sorted=False
         )
-        _, rnn_h = self.rnn(
-            x_packed,
-            (
-                self.h_initial.expand(-1, batch_size, -1)
-                if self.h_initial is not None
-                else None
-            ),
-        )
+
+        _, rnn_h = self.rnn(x_packed, self.h_initial.expand(-1, batch_size, -1))
 
         rnn_h = rnn_h.swapaxes(0, 1).reshape(batch_size, -1)
         ist, w = self.attention(
-            query=rnn_h, keys=F.tanh(self.tokens)[None, :, :].expand(batch_size, -1, -1)
+            query=rnn_h,
+            keys=F.tanh(self.tokens)[None, :, :].expand(batch_size, -1, -1),
         )
-        print(w.shape, w.min(1)[0], w.max(1)[0])
+        ist = F.tanh(ist)
         return ist.squeeze(1), w
