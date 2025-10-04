@@ -18,6 +18,7 @@ from cdmodel.model.components.ist_encoder import ISTEncoder
 from cdmodel.model.types import (
     AttentionMaskingStrategy,
     EmbeddingInputs,
+    FeatureFormat,
     IstInputs,
     SpeakerInputs,
 )
@@ -52,7 +53,8 @@ class CDModel(pl.LightningModule):
         ar_train: bool,
         ar_val: bool,
         train_primary_speaker_only: bool,
-        output: OutputFormat,
+        output: FeatureFormat,
+        input: list[FeatureFormat],
         dec_skip_conn: bool,
         emb_dim: int = 0,
         emb_proj_dim: int = 0,
@@ -74,7 +76,8 @@ class CDModel(pl.LightningModule):
         self.att_mask_strategy: Final[AttentionMaskingStrategy] = att_mask_strategy
 
         self.train_primary_speaker_only: Final[bool] = train_primary_speaker_only
-        self.output: Final[OutputFormat] = output
+        self.output: Final[FeatureFormat] = output
+        self.input: Final[list[FeatureFormat]] = input
 
         # Interaction Style Tokens
         # ==============================
@@ -104,14 +107,14 @@ class CDModel(pl.LightningModule):
         self.enc: EncoderType
         if ar_train or ar_val:
             self.enc = EncoderCell(
-                input_dim=enc_in_dim,
+                input_dim=enc_in_dim * len(self.input),
                 hidden_dim=enc_h_dim,
                 num_layers=enc_layers,
                 learn_rnn_initial_state=learn_rnn_initial_state,
             )
         else:
             self.enc = Encoder(
-                input_dim=enc_in_dim,
+                input_dim=enc_in_dim * len(self.input),
                 hidden_dim=enc_h_dim,
                 num_layers=enc_layers,
                 learn_rnn_initial_state=learn_rnn_initial_state,
@@ -324,8 +327,14 @@ class CDModel(pl.LightningModule):
     def training_step(self, batch: ConversationBatch, batch_idx: int):
         batch_size: Final[int] = batch.features.shape[0]
 
+        X = []
+        if "feature" in self.input:
+            X.append(batch.features)
+        if "feature_delta" in self.input:
+            X.append(batch.features_d)
+
         y_hat, _, _, _ = self(
-            f=batch.features,
+            f=torch.concat(X, dim=-1),
             f_d_sides=batch.features_d_sides,
             sides_lengths=batch.sides_lengths,
             conv_lengths=batch.conv_lengths,
@@ -362,8 +371,14 @@ class CDModel(pl.LightningModule):
     def validation_step(self, batch: ConversationBatch, batch_idx: int):
         batch_size: Final[int] = batch.features.shape[0]
 
+        X = []
+        if "feature" in self.input:
+            X.append(batch.features)
+        if "feature_delta" in self.input:
+            X.append(batch.features_d)
+
         y_hat, weights, _, _ = self(
-            f=batch.features,
+            f=torch.concat(X, dim=-1),
             f_d_sides=batch.features_d_sides,
             sides_lengths=batch.sides_lengths,
             conv_lengths=batch.conv_lengths,
@@ -421,8 +436,14 @@ class CDModel(pl.LightningModule):
         return loss
 
     def predict_step(self, batch: ConversationBatch, batch_idx: int):
+        X = []
+        if "feature" in self.input:
+            X.append(batch.features)
+        if "feature_delta" in self.input:
+            X.append(batch.features_d)
+
         y_hat, weights, att, dec = self(
-            f=batch.features,
+            f=torch.concat(X, dim=-1),
             f_d_sides=batch.features_d_sides,
             sides_lengths=batch.sides_lengths,
             conv_lengths=batch.conv_lengths,
