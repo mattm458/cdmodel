@@ -87,20 +87,22 @@ class CDModel(pl.LightningModule):
         self.enc_emb_in: Final[bool] = "encoder" in emb_in
         self.enc_spk_in: Final[bool] = "encoder" in spk_in
         enc_in_dim = (
-            self.num_features + (2 * self.enc_spk_in) + (emb_proj_dim * self.enc_emb_in)
+            (self.num_features * len(self.input))
+            + (2 * self.enc_spk_in)
+            + (emb_proj_dim * self.enc_emb_in)
         )
 
         self.enc: EncoderType
         if ar_train or ar_val:
             self.enc = EncoderCell(
-                input_dim=enc_in_dim * len(self.input),
+                input_dim=enc_in_dim,
                 hidden_dim=enc_h_dim,
                 num_layers=enc_layers,
                 learn_rnn_initial_state=learn_rnn_initial_state,
             )
         else:
             self.enc = Encoder(
-                input_dim=enc_in_dim * len(self.input),
+                input_dim=enc_in_dim,
                 hidden_dim=enc_h_dim,
                 num_layers=enc_layers,
                 learn_rnn_initial_state=learn_rnn_initial_state,
