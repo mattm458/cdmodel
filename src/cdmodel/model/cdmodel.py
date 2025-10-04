@@ -15,15 +15,13 @@ from cdmodel.model.components.decoder import DecoderCell
 from cdmodel.model.components.embeddings_encoder import EmbeddingsEncoder
 from cdmodel.model.components.encoder import Encoder, EncoderCell, EncoderType
 from cdmodel.model.components.ist_encoder import ISTEncoder
+from cdmodel.model.types import (
+    AttentionMaskingStrategy,
+    EmbeddingInputs,
+    IstInputs,
+    SpeakerInputs,
+)
 from cdmodel.util.visualization import plot_weights
-
-AttentionMaskingStrategy = Literal["partner"] | Literal["both"]
-OutputFormat = Literal["feature"] | Literal["feature_delta"]
-EmbeddingInputs = list[
-    Literal["encoder"] | Literal["decoder"] | Literal["attention"] | Literal["linear"]
-]
-SpeakerInputs = list[Literal["encoder"] | Literal["decoder"] | Literal["attention"]]
-IstInputs = list[Literal["decoder"] | Literal["attention"] | Literal["linear"]]
 
 
 def _append_context(
@@ -267,23 +265,7 @@ class CDModel(pl.LightningModule):
         dec_h = self.dec.init(batch_size=batch_size, device=device)
 
         # Create the history mask.
-        # The history mask tensor has the following dimensions:
-        #   [batch, conv_timestep, hist_timestep]
-        # At each conv_timestep, the tensor contains an attention
-        # mask that hides irrelevant historical turns from the
-        # attention mechanism.
-        # TODO: Test this
-        spk_rank_hist = spk_rank[:, None, :-1]
-        spk_rank_pred = spk_rank[:, 1:, None]
-        if self.att_mask_strategy == "partner":
-            spk_rank_cond = (spk_rank_hist != spk_rank_pred) & (spk_rank_hist != 0)
-        elif self.att_mask_strategy == "both":
-            spk_rank_cond = (spk_rank_hist != 0).expand(-1, num_steps - 1, -1)
-        else:
-            raise ValueError(
-                f"Unknown attention mask strategy {self.att_mask_strategy}"
-            )
-        hist_mask_t_arr = spk_rank_cond.tril().unbind(1)
+        hist_mask_t_arr = get_history_mask(spk_side, self.att_mask_strategy).unbind(1)
 
         y_hat_all = torch.zeros(
             batch_size, num_steps - 1, self.num_features, device=device
