@@ -5,7 +5,6 @@ from torch import Tensor, nn
 
 
 class EmbeddingsEncoder(nn.Module):
-
     def __init__(
         self, emb_style: str | None, emb_proj: bool, emb_dim: int, emb_proj_dim: int
     ):
