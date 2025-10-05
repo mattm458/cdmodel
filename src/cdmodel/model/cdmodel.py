@@ -445,3 +445,13 @@ class CDModel(pl.LightningModule):
         )
 
         return batch, y_hat, weights, att, dec
+
+    def on_train_batch_end(self, _, _1, _2):
+        if self.global_rank == 0:
+            for tag, parm in self.named_parameters():
+                self.logger.experiment.add_histogram(
+                    f"{tag} grad", parm.grad.data.cpu().numpy(), self.global_step
+                )
+                self.logger.experiment.add_histogram(
+                    f"{tag} weight", parm.detach().cpu().numpy(), self.global_step
+                )
