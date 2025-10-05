@@ -212,43 +212,35 @@ class CDModel(pl.LightningModule):
             n=num_steps,
             device=f.device,
         )
-        enc_in_arr = enc_in.split(1, 1)
+        enc_in_t_arr = enc_in.unsqueeze(2).unbind(1)
 
         # Prepare decoder inputs
         # ==============================
         att_ctx_t_arr = append_context(
-            tensors=[spk_side_onehot[:, 1:], emb_proj[:, 1:], ist_emb[:, 1:]],
+            tensors=[spk_side_onehot, emb_proj, ist_emb],
             cond=[self.att_spk_in, self.att_emb_in, self.att_ist_in],
             b=batch_size,
             n=num_steps,
             device=f.device,
-        ).unbind(1)
-        dec_ctx_t_arr = (
-            append_context(
-                tensors=[spk_side_onehot[:, 1:], emb_proj[:, 1:], ist_emb[:, 1:]],
-                cond=[self.dec_spk_in, self.dec_emb_in, self.dec_ist_in],
-                b=batch_size,
-                n=num_steps,
-                device=f.device,
-            )
-            .unsqueeze(2)
-            .unbind(1)
-        )
-        lin_ctx_t_arr = (
-            append_context(
-                tensors=[emb_proj[:, 1:], ist_emb[:, 1:]],
-                cond=[self.lin_emb_in, self.lin_ist_in],
-                b=batch_size,
-                n=num_steps,
-                device=f.device,
-            )
-            .unsqueeze(2)
-            .unbind(1)
-        )
+        )[:, 1:].unbind(1)
+        dec_ctx_t_arr = append_context(
+            tensors=[spk_side_onehot, emb_proj, ist_emb],
+            cond=[self.dec_spk_in, self.dec_emb_in, self.dec_ist_in],
+            b=batch_size,
+            n=num_steps,
+            device=f.device,
+        )[:, 1:, None].unbind(1)
+        lin_ctx_t_arr = append_context(
+            tensors=[emb_proj, ist_emb],
+            cond=[self.lin_emb_in, self.lin_ist_in],
+            b=batch_size,
+            n=num_steps,
+            device=f.device,
+        )[:, 1:, None].unbind(1)
 
         # Get state objects for the encoder and decoder
         # ==============================
-        hist, enc_h = self.enc.init(input=enc_in, lengths=conv_lengths)
+        hist, enc_h = self.enc.init(input=enc_in[:, :-1], lengths=conv_lengths - 1)
         precomputed_keys: Tensor | None = None
         if not autoregressive:
             precomputed_keys = self.dec.attention.precompute_keys(hist)
@@ -279,7 +271,7 @@ class CDModel(pl.LightningModule):
 
         # Loop through the conversation
         # ==============================
-        enc_in_t: Tensor = enc_in_arr[0]
+        enc_in_t: Tensor = enc_in_t_arr[0]
         for i in range(num_steps - 1):
             enc_h = self.enc(i=i, history=hist, h=enc_h, input=enc_in_t)
             y_hat_t, dec_h, att_t, w_t = self.dec(
@@ -301,7 +293,7 @@ class CDModel(pl.LightningModule):
                 dec_h_all[:, i] = dec_h.detach().swapaxes(0, 1).reshape(batch_size, -1)
 
             # Handle autoregressive training if enabled
-            enc_in_t = enc_in_arr[i + 1]
+            enc_in_t = enc_in_t_arr[i + 1]
             if autoregressive:
                 spk_is_primary_t = spk_is_1_t_arr[i + 1]
                 enc_in_t[spk_is_primary_t, :, : self.num_features] = y_hat_t.detach()[

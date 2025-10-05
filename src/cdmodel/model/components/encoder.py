@@ -44,8 +44,8 @@ class Encoder(EncoderType):
         batch_size: Final[int] = input.shape[0]
 
         x = nn.utils.rnn.pack_padded_sequence(
-            input=input[:, :-1],
-            lengths=lengths.cpu() - 1,
+            input=input,
+            lengths=lengths.cpu(),
             batch_first=True,
             enforce_sorted=False,
         )
@@ -92,7 +92,7 @@ class EncoderCell(EncoderType):
 
         history = torch.zeros(
             batch_size,
-            num_steps - 1,
+            num_steps,
             self.hidden_size,
             device=input.device,
         )
