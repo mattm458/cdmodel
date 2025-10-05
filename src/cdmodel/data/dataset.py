@@ -10,6 +10,9 @@ from torch.utils.data import Dataset
 from cdmodel.common.data import ConversationBatch
 
 PrimarySpeakerSelectionStrategy = Literal["first"] | Literal["second"] | Literal["both"]
+NormalizationStrategy = (
+    Literal["zscore"] | Literal["zscore_conv"] | Literal["zscore_conv_speaker"]
+)
 
 
 class ConversationDataset(Dataset):
@@ -20,7 +23,7 @@ class ConversationDataset(Dataset):
         conv_ids: list[int],
         zero_pad: bool,
         embeddings: str | None,
-        normalization: str,
+        normalization: NormalizationStrategy,
         primary_speaker_selection: PrimarySpeakerSelectionStrategy,
         norm_z_mean: Optional[Tensor] = None,
         norm_z_std: Optional[Tensor] = None,

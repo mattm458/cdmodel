@@ -1,5 +1,6 @@
 from typing import Literal
 
+AttentionActivation = Literal["sigmoid"] | Literal["softmax"]
 AttentionMaskingStrategy = Literal["partner"] | Literal["both"]
 FeatureFormat = Literal["feature"] | Literal["feature_delta"]
 EmbeddingInputs = list[

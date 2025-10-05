@@ -9,7 +9,11 @@ from torch import Tensor
 from torch.utils.data import DataLoader
 
 from cdmodel.data.collate_fn import collate_fn
-from cdmodel.data.dataset import ConversationDataset, PrimarySpeakerSelectionStrategy
+from cdmodel.data.dataset import (
+    ConversationDataset,
+    NormalizationStrategy,
+    PrimarySpeakerSelectionStrategy,
+)
 
 
 def split_ids(
@@ -37,7 +41,7 @@ class ConversationDataModule(LightningDataModule):
         features,
         zero_pad: bool,
         embeddings: str | None,
-        normalization: str,
+        normalization: NormalizationStrategy,
         primary_speaker_selection: PrimarySpeakerSelectionStrategy,
         num_workers: int,
     ):

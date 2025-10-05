@@ -3,10 +3,16 @@ from typing import Optional, Final
 import torch
 from torch import Tensor, nn
 from torch.nn import functional as F
+from cdmodel.model.types import AttentionActivation
 
 
 class AdditiveAttention(nn.Module):
-    def __init__(self, hidden_dim: int, query_dim: int, activation: str = "softmax"):
+    def __init__(
+        self,
+        hidden_dim: int,
+        query_dim: int,
+        activation: AttentionActivation = "softmax",
+    ):
         super().__init__()
 
         self.w = nn.Linear(query_dim, hidden_dim, bias=False)

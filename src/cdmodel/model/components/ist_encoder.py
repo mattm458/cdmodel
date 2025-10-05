@@ -3,6 +3,7 @@ from torch import Tensor, nn
 from torch.nn import functional as F
 
 from cdmodel.model.components.attention import AdditiveAttention
+from cdmodel.model.types import AttentionActivation
 
 
 class ISTEncoder(nn.Module):
@@ -14,6 +15,7 @@ class ISTEncoder(nn.Module):
         hidden_dim: int,
         num_layers: int,
         learn_rnn_initial_state: bool,
+        activation: AttentionActivation,
     ):
         super().__init__()
 
@@ -41,7 +43,7 @@ class ISTEncoder(nn.Module):
         self.attention = AdditiveAttention(
             hidden_dim=token_dim,
             query_dim=(hidden_dim * 2 * num_layers),
-            activation="sigmoid",
+            activation=activation,
         )
 
     def forward(self, x: Tensor, lengths: Tensor) -> tuple[Tensor, Tensor]:

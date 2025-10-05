@@ -11,6 +11,7 @@ from cdmodel.model.components.embeddings_encoder import EmbeddingsEncoder
 from cdmodel.model.components.encoder import Encoder, EncoderCell, EncoderType
 from cdmodel.model.components.ist_encoder import ISTEncoder
 from cdmodel.model.types import (
+    AttentionActivation,
     AttentionMaskingStrategy,
     EmbeddingInputs,
     FeatureFormat,
@@ -51,6 +52,8 @@ class CDModel(pl.LightningModule):
         ist_layers: int = 0,
         ist_h_dim: int = 0,
         ist_in: IstInputs = [],
+        ist_input: list[FeatureFormat] = [],
+        ist_activation: AttentionActivation = "softmax",
     ):
         super().__init__()
         self.save_hyperparameters()
@@ -71,15 +74,17 @@ class CDModel(pl.LightningModule):
         self.dec_ist_in: Final[bool] = "decoder" in ist_in
         self.lin_ist_in: Final[bool] = "linear" in ist_in
         self.ist_dim: Final[int] = ist_dim
+        self.ist_input: Final[list[FeatureFormat]] = ist_input
         self.ist_enc: nn.Module | None = None
         if ist:
             self.ist_enc = ISTEncoder(
-                in_dim=self.num_features,
+                in_dim=self.num_features * len(ist_input),
                 num_tokens=ist_tokens,
                 token_dim=ist_dim,
                 hidden_dim=ist_h_dim,
                 num_layers=ist_layers,
                 learn_rnn_initial_state=learn_rnn_initial_state,
+                activation=ist_activation,
             )
 
         # Encoder
