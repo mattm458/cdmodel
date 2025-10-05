@@ -4,7 +4,6 @@ from torch import Tensor
 from cdmodel.model.types import AttentionMaskingStrategy
 
 
-@torch.compile(dynamic=True)
 def append_context(
     tensors: list[Tensor | None], cond: list[bool], b: int, n: int, device
 ):
@@ -14,7 +13,6 @@ def append_context(
     return torch.concat(lst, -1)
 
 
-@torch.compile
 def get_history_mask(speaker_side: Tensor, att_mask_strategy: AttentionMaskingStrategy):
     """
     Build a causal attention mask over a history of dyadic conversation turns.
