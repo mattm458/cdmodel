@@ -246,10 +246,10 @@ class CDModel(pl.LightningModule):
         # Get state objects for the encoder and decoder
         # ==============================
         hist, enc_h = self.enc.init(input=enc_in[:, :-1], lengths=conv_lengths - 1)
-        precomputed_keys: Tensor | None = None
-        if not autoregressive:
-            precomputed_keys = self.dec.attention.precompute_keys(hist)
         dec_h = self.dec.init(batch_size=batch_size, device=device)
+        att_precomputed_keys = (
+            None if autoregressive else self.dec.attention.precompute_keys(hist)
+        )
 
         # Create the history mask.
         hist_mask_t_arr = get_history_mask(spk_side, self.att_mask_strategy).unbind(1)
@@ -286,7 +286,7 @@ class CDModel(pl.LightningModule):
                 att_ctx=att_ctx_t_arr[i],
                 dec_ctx=dec_ctx_t_arr[i],
                 lin_ctx=lin_ctx_t_arr[i],
-                precomputed_keys=precomputed_keys,
+                precomputed_keys=att_precomputed_keys,
             )
 
             y_hat_all[:, i] = y_hat_t.squeeze(1)
