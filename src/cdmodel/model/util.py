@@ -4,7 +4,7 @@ from torch import Tensor
 from cdmodel.model.types import AttentionMaskingStrategy
 
 
-@torch.compile
+@torch.compile(dynamic=True)
 def append_context(
     tensors: list[Tensor | None], cond: list[bool], b: int, n: int, device
 ):
