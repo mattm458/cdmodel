@@ -18,7 +18,7 @@ class ISTEncoder(nn.Module):
         super().__init__()
 
         self.tokens = nn.Parameter(torch.randn(num_tokens, token_dim))
-        print("tokens", self.tokens.shape)
+        print(f"ISTEncoder: Using {self.tokens.shape} tokens")
 
         if learn_rnn_initial_state:
             print("ISTEncoder: Learning RNN initial state")
@@ -58,5 +58,5 @@ class ISTEncoder(nn.Module):
             query=rnn_h,
             keys=F.tanh(self.tokens)[None, :, :].expand(batch_size, -1, -1),
         )
-        ist = F.tanh(ist)
+
         return ist.squeeze(1), w
