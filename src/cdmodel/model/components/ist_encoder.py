@@ -24,7 +24,7 @@ class ISTEncoder(nn.Module):
             print("ISTEncoder: Learning RNN initial state")
         self.h_initial = nn.Parameter(
             (
-                torch.randn(num_layers, 1, hidden_dim)
+                torch.randn(num_layers * 2, 1, hidden_dim)
                 if learn_rnn_initial_state
                 else torch.zeros(num_layers, 1, hidden_dim)
             ),
@@ -32,7 +32,7 @@ class ISTEncoder(nn.Module):
         )
         self.rnn = nn.GRU(
             in_dim,
-            hidden_dim // 2,
+            hidden_dim,
             bidirectional=True,
             batch_first=True,
             num_layers=num_layers,
@@ -40,7 +40,7 @@ class ISTEncoder(nn.Module):
 
         self.attention = AdditiveAttention(
             hidden_dim=token_dim,
-            query_dim=(hidden_dim * num_layers),
+            query_dim=(hidden_dim * 2 * num_layers),
             activation="sigmoid",
         )
 
