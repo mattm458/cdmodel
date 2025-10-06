@@ -401,6 +401,7 @@ class CDModel(pl.LightningModule):
 
             plot_weights(
                 weights=w,
+                masking_strategy=self.att_mask_strategy,
                 spk_side=spk_side,
                 spk=1,
                 title="weights_1",
@@ -409,6 +410,7 @@ class CDModel(pl.LightningModule):
             )
             plot_weights(
                 weights=w,
+                masking_strategy=self.att_mask_strategy,
                 spk_side=spk_side,
                 spk=2,
                 title="weights_2",
@@ -417,6 +419,7 @@ class CDModel(pl.LightningModule):
             )
             plot_weights(
                 weights=w,
+                masking_strategy=self.att_mask_strategy,
                 spk_side=spk_side,
                 spk=None,
                 title="weights_both",
@@ -446,12 +449,12 @@ class CDModel(pl.LightningModule):
 
         return batch, y_hat, weights, att, dec
 
-    def on_train_batch_end(self, _, _1, _2):
-        if self.global_rank == 0:
-            for tag, parm in self.named_parameters():
+    def on_train_batch_end(self, outputs, batch, batch_idx):
+        if batch_idx == 0:
+            for tag, param in self.named_parameters():
                 self.logger.experiment.add_histogram(
-                    f"{tag} grad", parm.grad.data.cpu().numpy(), self.global_step
+                    f"grad/{tag}", param.grad.data.cpu().numpy(), self.global_step
                 )
                 self.logger.experiment.add_histogram(
-                    f"{tag} weight", parm.detach().cpu().numpy(), self.global_step
+                    f"weight/{tag}", param.detach().cpu().numpy(), self.global_step
                 )

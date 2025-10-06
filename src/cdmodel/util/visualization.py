@@ -1,13 +1,14 @@
 import matplotlib
-
-
-from numpy.typing import ArrayLike
-import numpy as np
 import matplotlib.pyplot as plt
+import numpy as np
+from numpy.typing import ArrayLike
+
+from cdmodel.model.types import AttentionMaskingStrategy
 
 
 def plot_weights(
     weights: ArrayLike,
+    masking_strategy: AttentionMaskingStrategy,
     spk_side: ArrayLike,
     spk: int | None,
     title: str,
@@ -21,7 +22,10 @@ def plot_weights(
 
     if spk is not None:
         timestep_mask = spk_side[1:] == spk
-        history_mask = (spk_side != spk) | (spk_side == 0)
+        if masking_strategy == "partner":
+            history_mask = spk_side != spk
+        elif masking_strategy == "both":
+            history_mask = np.ones_like(spk_side, dtype=np.bool)
     else:
         timestep_mask = np.ones_like(spk_side[1:], dtype=np.bool)
         history_mask = np.ones_like(spk_side, dtype=np.bool)
