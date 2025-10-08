@@ -1,10 +1,9 @@
 from os import path
-from typing import Final
+from typing import Final, Literal
 
 import pandas as pd
 import torch
 from lightning import LightningDataModule
-from sklearn.model_selection import train_test_split
 from torch import Tensor
 from torch.utils.data import DataLoader
 
@@ -14,29 +13,16 @@ from cdmodel.data.dataset import (
     NormalizationStrategy,
     PrimarySpeakerSelectionStrategy,
 )
+from cdmodel.util.split import split_by_id, split_disjoint
 
-
-def split_ids(
-    ids: set[int], train_size: float = 0.8
-) -> tuple[list[int], list[int], list[int]]:
-    ids_lst = list(ids)
-    ids_lst.sort()
-
-    ids_train, ids_test = train_test_split(
-        ids_lst,
-        random_state=42,
-        train_size=train_size,
-    )
-
-    ids_test, ids_val = train_test_split(ids_test, random_state=42, test_size=0.5)
-
-    return ids_train, ids_val, ids_test
+SplitStrategy = Literal["id"] | Literal["disjoint"]
 
 
 class ConversationDataModule(LightningDataModule):
     def __init__(
         self,
         dataset_dir: str,
+        split_strategy: SplitStrategy,
         batch_size: int,
         features,
         zero_pad: bool,
@@ -48,6 +34,7 @@ class ConversationDataModule(LightningDataModule):
         super().__init__()
 
         self.dataset_dir: Final[str] = dataset_dir
+        self.split_strategy: Final[SplitStrategy] = split_strategy
         self.batch_size: Final[int] = batch_size
         self.features: Final[list[str]] = features
         self.zero_pad: Final[bool] = zero_pad
@@ -66,11 +53,20 @@ class ConversationDataModule(LightningDataModule):
 
     def setup(self, stage: str):
         df = pd.read_csv(path.join(self.dataset_dir, "data_all.csv"), engine="pyarrow")
-        ids = set(df["conv_id"].unique())
-        self.conv_ids_train, self.conv_ids_val, self.conv_ids_test = split_ids(ids)
 
-        if self.normalization == "zscore":
-            self.norm_z_mean = torch.from_numpy(
+        self.conv_ids_train: list[int]
+        self.conv_ids_val: list[int]
+        self.conv_ids_test: list[int]
+        if self.split_strategy == "id":
+            self.conv_ids_train, self.conv_ids_val, self.conv_ids_test = split_by_id(
+                set(df["conv_id"].unique().tolist())
+            )
+        elif self.split_strategy == "disjoint":
+            self.conv_ids_train, self.conv_ids_val, self.conv_ids_test = split_disjoint(
+                df
+            )
+        else:
+            raise Exception(f"Unknown split strategy {self.split_strategy}")
                 df.loc[
                     df.conv_id.isin(self.conv_ids_train), self.features
                 ].values.astype("float32")
