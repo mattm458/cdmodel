@@ -5,14 +5,15 @@ from torch import Tensor
 
 class ConversationBatch(NamedTuple):
     conv_ids: list[int]
-    features: Tensor
-    features_sides: dict[int, Tensor]
-    features_d: Tensor
-    features_d_sides: dict[int, Tensor]
-    features_d_sides_exchanges: dict[int, Tensor]
-    features_d_sides_exchanges_lengths: dict[int, Tensor]
-    sides_lengths: dict[int, Tensor]
     conv_lengths: Tensor
     speaker_ids: Tensor
     speaker_side: Tensor
+
+    features: Tensor
+    features_d: Tensor
+
+    features_sides: dict[int, Tensor]
+    features_d_sides: dict[int, Tensor]
+    sides_lengths: dict[int, Tensor]
+
     segment_embeddings: Tensor | None

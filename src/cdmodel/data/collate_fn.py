@@ -15,8 +15,6 @@ def collate_fn(batch: list[ConversationBatch]):
     features_sides_all: dict[int, list[Tensor]] = {1: [], 2: []}
     features_d_sides_all: dict[int, list[Tensor]] = {1: [], 2: []}
     sides_lengths_all: dict[int, list[Tensor]] = {1: [], 2: []}
-    features_d_sides_exchanges_all: dict[int, list[Tensor]] = {1: [], 2: []}
-    features_d_sides_exchanges_lengths_all: dict[int, list[Tensor]] = {1: [], 2: []}
 
     for b in batch:
         conv_ids_all.extend(b.conv_ids)
@@ -32,19 +30,6 @@ def collate_fn(batch: list[ConversationBatch]):
         features_d_sides_all[2].append(b.features_d_sides[2].squeeze(0))
         sides_lengths_all[1].append(b.sides_lengths[1].squeeze(0))
         sides_lengths_all[2].append(b.sides_lengths[2].squeeze(0))
-
-        features_d_sides_exchanges_all[1].append(
-            b.features_d_sides_exchanges[1].squeeze(0)
-        )
-        features_d_sides_exchanges_all[2].append(
-            b.features_d_sides_exchanges[2].squeeze(0)
-        )
-        features_d_sides_exchanges_lengths_all[1].append(
-            b.features_d_sides_exchanges_lengths[1].squeeze(0)
-        )
-        features_d_sides_exchanges_lengths_all[2].append(
-            b.features_d_sides_exchanges_lengths[2].squeeze(0)
-        )
 
         if b.segment_embeddings is not None:
             segment_embeddings_all.append(b.segment_embeddings.squeeze(0))
@@ -74,17 +59,5 @@ def collate_fn(batch: list[ConversationBatch]):
         sides_lengths={
             1: torch.stack(sides_lengths_all[1]),
             2: torch.stack(sides_lengths_all[2]),
-        },
-        features_d_sides_exchanges={
-            1: nn.utils.rnn.pad_sequence(
-                features_d_sides_exchanges_all[1], batch_first=True
-            ),
-            2: nn.utils.rnn.pad_sequence(
-                features_d_sides_exchanges_all[2], batch_first=True
-            ),
-        },
-        features_d_sides_exchanges_lengths={
-            1: torch.stack(features_d_sides_exchanges_lengths_all[1]),
-            2: torch.stack(features_d_sides_exchanges_lengths_all[2]),
         },
     )

@@ -52,7 +52,6 @@ class CDModel(pl.LightningModule):
         ist_layers: int = 0,
         ist_h_dim: int = 0,
         ist_in: IstInputs = [],
-        ist_input: list[FeatureFormat] = [],
         ist_activation: AttentionActivation = "softmax",
     ):
         super().__init__()

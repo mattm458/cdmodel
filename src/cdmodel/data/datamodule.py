@@ -45,8 +45,8 @@ class ConversationDataModule(LightningDataModule):
         )
         self.num_workers: Final[int] = num_workers
 
-        self.norm_z_mean: Tensor | None = None
-        self.norm_z_std: Tensor | None = None
+        self.norm_z_mean: dict[str, Tensor] = {}
+        self.norm_z_std: dict[str, Tensor] = {}
 
     def prepare_data(self):
         print("Preparing data")
@@ -67,11 +67,15 @@ class ConversationDataModule(LightningDataModule):
             )
         else:
             raise Exception(f"Unknown split strategy {self.split_strategy}")
+
+        for f in ["", "_diff", "_spk_diff"]:
+            self.norm_z_mean[f"features{f}"] = torch.from_numpy(
                 df.loc[
-                    df.conv_id.isin(self.conv_ids_train), self.features
+                    df.conv_id.isin(self.conv_ids_train),
+                    [f"{x}{f}" for x in self.features],
                 ].values.astype("float32")
             ).mean(0)
-            self.norm_z_std = torch.from_numpy(
+            self.norm_z_std[f"features{f}"] = torch.from_numpy(
                 df.loc[
                     df.conv_id.isin(self.conv_ids_train), self.features
                 ].values.astype("float32")
