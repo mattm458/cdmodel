@@ -69,15 +69,15 @@ class CDModel(pl.LightningModule):
 
         # Interaction Style Tokens
         # ==============================
+        self.enc_ist_in: Final[bool] = "encoder" in ist_in
         self.att_ist_in: Final[bool] = "attention" in ist_in
         self.dec_ist_in: Final[bool] = "decoder" in ist_in
         self.lin_ist_in: Final[bool] = "linear" in ist_in
         self.ist_dim: Final[int] = ist_dim
-        self.ist_input: Final[list[FeatureFormat]] = ist_input
         self.ist_enc: nn.Module | None = None
         if ist:
             self.ist_enc = ISTEncoder(
-                in_dim=self.num_features * len(ist_input),
+                in_dim=self.num_features,
                 num_tokens=ist_tokens,
                 token_dim=ist_dim,
                 hidden_dim=ist_h_dim,
@@ -210,8 +210,8 @@ class CDModel(pl.LightningModule):
         # Prepare encoder inputs
         # ==============================
         enc_in = append_context(
-            tensors=[f, spk_side_onehot, emb_proj],
-            cond=[True, self.enc_spk_in, self.enc_emb_in],
+            tensors=[f, spk_side_onehot, emb_proj, ist_emb],
+            cond=[True, self.enc_spk_in, self.enc_emb_in, self.enc_ist_in],
             b=batch_size,
             n=num_steps,
             device=f.device,
