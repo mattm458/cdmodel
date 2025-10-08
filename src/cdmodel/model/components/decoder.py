@@ -87,6 +87,7 @@ class DecoderCell(nn.Module):
         att_ctx: Tensor,
         dec_ctx: Tensor,
         lin_ctx: Tensor,
+        encoder_skip: Optional[Tensor] = None,
         mask: Optional[Tensor] = None,
         precomputed_keys: Optional[Tensor] = None,
     ):
@@ -108,6 +109,9 @@ class DecoderCell(nn.Module):
             )
         else:
             att_out, att_weights = self.attention(query=att_in, keys=input, mask=mask)
+
+        if encoder_skip is not None:
+            att_out = att_out + encoder_skip
 
         dec_in = (
             att_out

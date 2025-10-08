@@ -42,6 +42,7 @@ class CDModel(pl.LightningModule):
         train_primary_speaker_only: bool,
         output: FeatureFormat,
         input: list[FeatureFormat],
+        enc_skip_conn: bool,
         dec_skip_conn: bool,
         emb_dim: int = 0,
         emb_proj_dim: int = 0,
@@ -88,12 +89,18 @@ class CDModel(pl.LightningModule):
 
         # Encoder
         # ==============================
+        if enc_skip_conn and att_mask_strategy != "both":
+            raise Exception(
+                "Encoder skip connection is only implemented for a 'both' attention masking strategy"
+            )
         self.enc_emb_in: Final[bool] = "encoder" in emb_in
         self.enc_spk_in: Final[bool] = "encoder" in spk_in
+        self.enc_skip_conn: Final[bool] = enc_skip_conn
         enc_in_dim = (
             (self.num_features * len(self.input))
             + (2 * self.enc_spk_in)
             + (emb_proj_dim * self.enc_emb_in)
+            + (ist_dim * self.enc_ist_in)
         )
 
         self.enc: EncoderType
@@ -285,6 +292,7 @@ class CDModel(pl.LightningModule):
                 att_ctx=att_ctx_t_arr[i],
                 dec_ctx=dec_ctx_t_arr[i],
                 lin_ctx=lin_ctx_t_arr[i],
+                encoder_skip=hist[:, i, None] if self.enc_skip_conn else None,
                 precomputed_keys=att_precomputed_keys,
             )
 
