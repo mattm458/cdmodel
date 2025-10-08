@@ -7,4 +7,6 @@ EmbeddingInputs = list[
     Literal["encoder"] | Literal["decoder"] | Literal["attention"] | Literal["linear"]
 ]
 SpeakerInputs = list[Literal["encoder"] | Literal["decoder"] | Literal["attention"]]
-IstInputs = list[Literal["decoder"] | Literal["attention"] | Literal["linear"]]
+IstInputs = list[
+    Literal["encoder"] | Literal["decoder"] | Literal["attention"] | Literal["linear"]
+]
