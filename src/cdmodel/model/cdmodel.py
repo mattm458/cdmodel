@@ -17,6 +17,7 @@ from cdmodel.model.types import (
     FeatureFormat,
     IstInputs,
     SpeakerInputs,
+    SpeakerSexInputs,
 )
 from cdmodel.model.util import append_context, get_history_mask
 from cdmodel.util.visualization import plot_weights
@@ -30,6 +31,7 @@ class CDModel(pl.LightningModule):
         emb_proj: bool,
         emb_style: str | None,
         spk_in: SpeakerInputs,
+        spk_sex_in: SpeakerSexInputs,
         enc_h_dim: int,
         enc_layers: int,
         att_mask_strategy: AttentionMaskingStrategy,
@@ -95,10 +97,12 @@ class CDModel(pl.LightningModule):
             )
         self.enc_emb_in: Final[bool] = "encoder" in emb_in
         self.enc_spk_in: Final[bool] = "encoder" in spk_in
+        self.enc_spk_sex_in: Final[bool] = "encoder" in spk_sex_in
         self.enc_skip_conn: Final[bool] = enc_skip_conn
         enc_in_dim = (
             (self.num_features * len(self.input))
             + (2 * self.enc_spk_in)
+            + (2 * self.enc_spk_sex_in)
             + (emb_proj_dim * self.enc_emb_in)
             + (ist_dim * self.enc_ist_in)
         )
@@ -126,18 +130,25 @@ class CDModel(pl.LightningModule):
         self.lin_emb_in: Final[bool] = "linear" in emb_in
         self.att_spk_in: Final[bool] = "attention" in spk_in
         self.dec_spk_in: Final[bool] = "decoder" in spk_in
+        self.att_spk_sex_in: Final[bool] = "attention" in spk_sex_in
+        self.dec_spk_sex_in: Final[bool] = "decoder" in spk_sex_in
+        self.lin_spk_sex_in: Final[bool] = "linear" in spk_sex_in
         self.enc_h_dim: Final[int] = enc_h_dim
         self.dec_h_dim: Final[int] = dec_h_dim
         self.dec_layers: Final[int] = dec_layers
         self.dec = DecoderCell(
             in_dim=enc_h_dim,
             att_ctx_dim=(2 * self.att_spk_in)
+            + (2 * self.att_spk_sex_in)
             + (emb_proj_dim * self.att_emb_in)
             + (ist_dim * self.att_ist_in),
             dec_ctx_dim=(2 * self.dec_spk_in)
+            + (2 * self.dec_spk_sex_in)
             + (emb_proj_dim * self.dec_emb_in)
             + (ist_dim * self.dec_ist_in),
-            lin_ctx_dim=(emb_proj_dim * self.lin_emb_in) + (ist_dim * self.lin_ist_in),
+            lin_ctx_dim=(emb_proj_dim * self.lin_emb_in)
+            + (ist_dim * self.lin_ist_in)
+            + (2 * self.lin_spk_sex_in),
             h_dim=dec_h_dim,
             num_layers=dec_layers,
             lin_num_layers=lin_layers,
@@ -179,6 +190,7 @@ class CDModel(pl.LightningModule):
         sides_lengths: dict[int, Tensor],
         conv_lengths: Tensor,
         spk_side: Tensor,
+        spk_sex: Tensor,
         segment_emb: Tensor | None,
         autoregressive: bool,
         return_h: bool = False,
@@ -217,8 +229,14 @@ class CDModel(pl.LightningModule):
         # Prepare encoder inputs
         # ==============================
         enc_in = append_context(
-            tensors=[f, spk_side_onehot, emb_proj, ist_emb],
-            cond=[True, self.enc_spk_in, self.enc_emb_in, self.enc_ist_in],
+            tensors=[f, spk_side_onehot, spk_sex, emb_proj, ist_emb],
+            cond=[
+                True,
+                self.enc_spk_in,
+                self.enc_spk_sex_in,
+                self.enc_emb_in,
+                self.enc_ist_in,
+            ],
             b=batch_size,
             n=num_steps,
             device=f.device,
@@ -228,22 +246,32 @@ class CDModel(pl.LightningModule):
         # Prepare decoder inputs
         # ==============================
         att_ctx_t_arr = append_context(
-            tensors=[spk_side_onehot, emb_proj, ist_emb],
-            cond=[self.att_spk_in, self.att_emb_in, self.att_ist_in],
+            tensors=[spk_side_onehot, spk_sex, emb_proj, ist_emb],
+            cond=[
+                self.att_spk_in,
+                self.att_spk_sex_in,
+                self.att_emb_in,
+                self.att_ist_in,
+            ],
             b=batch_size,
             n=num_steps,
             device=f.device,
         )[:, 1:].unbind(1)
         dec_ctx_t_arr = append_context(
-            tensors=[spk_side_onehot, emb_proj, ist_emb],
-            cond=[self.dec_spk_in, self.dec_emb_in, self.dec_ist_in],
+            tensors=[spk_side_onehot, spk_sex, emb_proj, ist_emb],
+            cond=[
+                self.dec_spk_in,
+                self.dec_spk_sex_in,
+                self.dec_emb_in,
+                self.dec_ist_in,
+            ],
             b=batch_size,
             n=num_steps,
             device=f.device,
         )[:, 1:, None].unbind(1)
         lin_ctx_t_arr = append_context(
-            tensors=[emb_proj, ist_emb],
-            cond=[self.lin_emb_in, self.lin_ist_in],
+            tensors=[spk_sex, emb_proj, ist_emb],
+            cond=[self.lin_spk_sex_in, self.lin_emb_in, self.lin_ist_in],
             b=batch_size,
             n=num_steps,
             device=f.device,
@@ -329,6 +357,7 @@ class CDModel(pl.LightningModule):
             sides_lengths=batch.sides_lengths,
             conv_lengths=batch.conv_lengths,
             spk_side=batch.speaker_side,
+            spk_sex=batch.speaker_sex,
             segment_emb=batch.segment_embeddings,
             autoregressive=self.ar_train,
         )
@@ -373,6 +402,7 @@ class CDModel(pl.LightningModule):
             sides_lengths=batch.sides_lengths,
             conv_lengths=batch.conv_lengths,
             spk_side=batch.speaker_side,
+            spk_sex=batch.speaker_sex,
             segment_emb=batch.segment_embeddings,
             autoregressive=self.ar_val,
             return_h=True,
@@ -449,6 +479,7 @@ class CDModel(pl.LightningModule):
             sides_lengths=batch.sides_lengths,
             conv_lengths=batch.conv_lengths,
             spk_side=batch.speaker_side,
+            spk_sex=batch.speaker_sex,
             segment_emb=batch.segment_embeddings,
             autoregressive=self.ar_val,
             return_h=True,

@@ -130,12 +130,17 @@ class ConversationDataset(Dataset):
         else:
             raise Exception(f"Unknown normalization method {self.normalization}")
 
+        speaker_sex = torch.zeros((len(features), 2), dtype=torch.long)
+        speaker_sex[(conv_df.sex == "m").values, 0] = 1
+        speaker_sex[(conv_df.sex == "f").values, 1] = 1
+
         # Add a leading 0 to all data if requested
         if self.zero_pad:
             features = F.pad(features, (0, 0, 1, 0))
             features_diff = F.pad(features_diff, (0, 0, 1, 0))
             speaker_ids = F.pad(speaker_ids, (1, 0))
             speaker_side = F.pad(speaker_side, (1, 0))
+            speaker_sex = F.pad(speaker_sex, (0, 0, 1, 0))
 
             if segment_embeddings is not None:
                 segment_embeddings = F.pad(segment_embeddings, (0, 0, 1, 0))
@@ -146,6 +151,7 @@ class ConversationDataset(Dataset):
             features_d=features_diff.unsqueeze(0),
             conv_lengths=torch.tensor([len(features)]),
             speaker_ids=speaker_ids.unsqueeze(0),
+            speaker_sex=speaker_sex.unsqueeze(0),
             speaker_side=speaker_side.unsqueeze(0),
             segment_embeddings=segment_embeddings,
             features_sides={

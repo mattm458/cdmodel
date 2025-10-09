@@ -10,6 +10,7 @@ def collate_fn(batch: list[ConversationBatch]):
     features_d_all: list[Tensor] = []
     conv_lengths_all: list[Tensor] = []
     speaker_ids_all: list[Tensor] = []
+    speaker_sex_all: list[Tensor] = []
     speaker_rank_all: list[Tensor] = []
     segment_embeddings_all: list[Tensor] = []
     features_sides_all: dict[int, list[Tensor]] = {1: [], 2: []}
@@ -23,6 +24,7 @@ def collate_fn(batch: list[ConversationBatch]):
         conv_lengths_all.append(b.conv_lengths.squeeze(0))
         speaker_ids_all.append(b.speaker_ids.squeeze(0))
         speaker_rank_all.append(b.speaker_side.squeeze(0))
+        speaker_sex_all.append(b.speaker_sex.squeeze(0))
 
         features_sides_all[1].append(b.features_sides[1].squeeze(0))
         features_sides_all[2].append(b.features_sides[2].squeeze(0))
@@ -47,6 +49,7 @@ def collate_fn(batch: list[ConversationBatch]):
         conv_lengths=torch.stack(conv_lengths_all),
         speaker_ids=nn.utils.rnn.pad_sequence(speaker_ids_all, batch_first=True),
         speaker_side=nn.utils.rnn.pad_sequence(speaker_rank_all, batch_first=True),
+        speaker_sex=nn.utils.rnn.pad_sequence(speaker_sex_all, batch_first=True),
         segment_embeddings=segment_embeddings,
         features_sides={
             1: nn.utils.rnn.pad_sequence(features_sides_all[1], batch_first=True),

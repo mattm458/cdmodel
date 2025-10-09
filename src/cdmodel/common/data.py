@@ -8,6 +8,7 @@ class ConversationBatch(NamedTuple):
     conv_lengths: Tensor
     speaker_ids: Tensor
     speaker_side: Tensor
+    speaker_sex: Tensor
 
     features: Tensor
     features_d: Tensor
