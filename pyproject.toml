@@ -16,6 +16,7 @@ classifiers = [
     "Operating System :: OS Independent",
 ]
 dependencies = [
+    "click==8.3.0",
     "hyphenate==1.1.0",
     "jsonargparse[signatures]==4.41.0",
     "librosa==0.11.0",
