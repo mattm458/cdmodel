@@ -25,6 +25,8 @@ class Encoder(EncoderType):
     ):
         super().__init__()
 
+        self.num_layers: Final[int] = num_layers
+
         if learn_rnn_initial_state:
             print("Encoder: Learning RNN initial state")
         self.h_initial = nn.Parameter(
@@ -50,7 +52,7 @@ class Encoder(EncoderType):
             enforce_sorted=False,
         )
 
-        x, h = self.rnn(x, self.h_initial.expand(-1, batch_size, -1))
+        x, h = self.rnn(x, self.h_initial.expand(self.num_layers, batch_size, -1))
 
         history, _ = nn.utils.rnn.pad_packed_sequence(x, batch_first=True)
         return history, h

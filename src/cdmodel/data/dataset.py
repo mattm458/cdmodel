@@ -11,7 +11,9 @@ from cdmodel.common.data import ConversationBatch
 
 PrimarySpeakerSelectionStrategy = Literal["first"] | Literal["second"] | Literal["both"]
 NormalizationStrategy = (
-    Literal["zscore"] | Literal["zscore_conv"] | Literal["zscore_conv_speaker"]
+    Literal["zscore"]
+    | Literal["zscore_conv"]
+    | Literal["zscore_conv_speaker"]
 )
 
 
@@ -63,7 +65,10 @@ class ConversationDataset(Dataset):
         # Load the conversation data
         conv_df = pd.read_csv(path.join(self.dataset_dir, "csv", f"{conv_id}.csv"))
 
-        speaker_ids = torch.from_numpy(conv_df.spk_id.values)
+        # Retrieve the transcript
+        text: list[str] = conv_df.text.tolist()
+
+        speaker_ids = torch.from_numpy(conv_df.spk_id.values.copy())
         # Assign labels of 1 and 2 for primary and secondary speaker, respectively,
         # according to the selection criteria
         speaker_side: Tensor = (
@@ -86,6 +91,24 @@ class ConversationDataset(Dataset):
             conv_df[[f"{x}_diff" for x in self.features]].values.astype("float32")
         )
 
+        # Compute the side exchange vector
+        speaker_exchange = F.one_hot(
+            (
+                speaker_side.diff(
+                    dim=0,
+                    prepend=torch.zeros(
+                        1,
+                    ),
+                )
+                != 0
+            ).type(torch.long)
+        ).type(torch.float)
+
+        sides_exchange = {
+            1: speaker_exchange[speaker_side == 1].unsqueeze(0),
+            2: speaker_exchange[speaker_side == 2].unsqueeze(0),
+        }
+
         # Compute side-specific deltas
         features_d_sides_all = features.clone()
         for side in [1, 2]:
@@ -102,7 +125,14 @@ class ConversationDataset(Dataset):
             2: features_d_sides_all[speaker_side == 2].unsqueeze(0),
         }
 
+        # Compute side-specific embeddings
+        embeddings_sides = {}
+        if segment_embeddings is not None:
+            embeddings_sides[1] = segment_embeddings[speaker_side == 1]
+            embeddings_sides[2] = segment_embeddings[speaker_side == 2]
+
         # Normalization
+        features_original = features.clone()
         if self.normalization == "zscore":
             if self.norm_z_mean is None or self.norm_z_std is None:
                 raise Exception(
@@ -127,20 +157,24 @@ class ConversationDataset(Dataset):
 
                 f = features_diff[speaker_id_mask]
                 features_diff[speaker_id_mask] = (f - f.mean(0)) / f.std(0)
+
         else:
             raise Exception(f"Unknown normalization method {self.normalization}")
 
         speaker_sex = torch.zeros((len(features), 2), dtype=torch.long)
-        speaker_sex[(conv_df.sex == "m").values, 0] = 1
-        speaker_sex[(conv_df.sex == "f").values, 1] = 1
+        speaker_sex[(conv_df.sex == "m").values.copy(), 0] = 1
+        speaker_sex[(conv_df.sex == "f").values.copy(), 1] = 1
 
         # Add a leading 0 to all data if requested
         if self.zero_pad:
+            text.insert(0, "")
             features = F.pad(features, (0, 0, 1, 0))
+            features_original = F.pad(features_original, (0, 0, 1, 0))
             features_diff = F.pad(features_diff, (0, 0, 1, 0))
             speaker_ids = F.pad(speaker_ids, (1, 0))
             speaker_side = F.pad(speaker_side, (1, 0))
             speaker_sex = F.pad(speaker_sex, (0, 0, 1, 0))
+            speaker_exchange = F.pad(speaker_exchange, (0, 0, 1, 0))
 
             if segment_embeddings is not None:
                 segment_embeddings = F.pad(segment_embeddings, (0, 0, 1, 0))
@@ -148,19 +182,24 @@ class ConversationDataset(Dataset):
         return ConversationBatch(
             conv_ids=[conv_id],
             features=features.unsqueeze(0),
+            features_original=features_original.unsqueeze(0),
             features_d=features_diff.unsqueeze(0),
             conv_lengths=torch.tensor([len(features)]),
             speaker_ids=speaker_ids.unsqueeze(0),
             speaker_sex=speaker_sex.unsqueeze(0),
             speaker_side=speaker_side.unsqueeze(0),
+            sides_exchange=sides_exchange,
             segment_embeddings=segment_embeddings,
             features_sides={
                 1: features[speaker_side == 1].unsqueeze(0),
                 2: features[speaker_side == 2].unsqueeze(0),
             },
+            embeddings_sides=embeddings_sides,
             features_d_sides=features_d_sides,
             sides_lengths={
                 1: torch.tensor([(speaker_side == 1).sum()]),
                 2: torch.tensor([(speaker_side == 2).sum()]),
             },
+            text=[text],
+            speaker_exchange=speaker_exchange.unsqueeze(0),
         )

@@ -1,7 +1,7 @@
 from typing import Literal
 
 AttentionActivation = Literal["sigmoid"] | Literal["softmax"]
-AttentionMaskingStrategy = Literal["partner"] | Literal["both"]
+AttentionMaskingStrategy = Literal["self"] | Literal["partner"] | Literal["both"]
 FeatureFormat = Literal["feature"] | Literal["feature_delta"]
 EmbeddingInputs = list[
     Literal["encoder"] | Literal["decoder"] | Literal["attention"] | Literal["linear"]
@@ -11,5 +11,9 @@ SpeakerSexInputs = list[
     Literal["encoder"] | Literal["decoder"] | Literal["attention"] | Literal["linear"]
 ]
 IstInputs = list[
-    Literal["encoder"] | Literal["decoder"] | Literal["attention"] | Literal["linear"]
+    Literal["encoder"]
+    | Literal["history"]
+    | Literal["decoder"]
+    | Literal["attention"]
+    | Literal["linear"]
 ]

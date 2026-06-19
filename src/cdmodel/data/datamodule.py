@@ -15,7 +15,7 @@ from cdmodel.data.dataset import (
 )
 from cdmodel.util.split import split_by_id, split_disjoint
 
-SplitStrategy = Literal["id"] | Literal["disjoint"]
+SplitStrategy = Literal["id"] | Literal["disjoint"] | Literal["none"]
 
 
 class ConversationDataModule(LightningDataModule):
@@ -65,6 +65,11 @@ class ConversationDataModule(LightningDataModule):
             self.conv_ids_train, self.conv_ids_val, self.conv_ids_test = split_disjoint(
                 df
             )
+        elif self.split_strategy == "none":
+            ids = df["conv_id"].sort_values().unique().tolist()
+            self.conv_ids_train = ids
+            self.conv_ids_test = ids
+            self.conv_ids_val = ids
         else:
             raise Exception(f"Unknown split strategy {self.split_strategy}")
 
