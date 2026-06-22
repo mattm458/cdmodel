@@ -29,10 +29,10 @@ class AdditiveAttention(nn.Module):
         query: Tensor,
         keys: Tensor,
         mask: Optional[Tensor] = None,
-        precomputed_keys: bool = False,
+        precomputed_keys: Tensor | None = None,
     ):
-        if precomputed_keys:
-            scores = self.v(torch.tanh(self.w(query.unsqueeze(1)) + keys))
+        if precomputed_keys is not None:
+            scores = self.v(torch.tanh(self.w(query.unsqueeze(1)) + precomputed_keys))
         else:
             scores = self.v(torch.tanh(self.w(query.unsqueeze(1)) + self.u(keys)))
 

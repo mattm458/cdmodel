@@ -337,7 +337,10 @@ class CDModel(pl.LightningModule):
         dec_h = self.dec.init(batch_size=batch_size, device=device)
         att_precomputed_keys = (
             None
-            if (autoregressive or self.att_style in {"dual", "fused", "none"})
+            if (
+                isinstance(self.enc, EncoderCell)
+                or self.att_style in {"dual", "fused", "none"}
+            )
             else self.dec.attention.precompute_keys(hist)
         )
 
