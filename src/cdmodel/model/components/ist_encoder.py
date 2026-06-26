@@ -1,8 +1,10 @@
+from typing import Final
+
 import torch
 from torch import Tensor, nn
 from torch.nn import functional as F
-from typing import Final
-from cdmodel.model.components.attention import AdditiveAttention
+
+from cdmodel.model.components.attention import AdditiveAttention, AttentionActivation
 
 
 class ISTEncoder(nn.Module):
@@ -15,6 +17,7 @@ class ISTEncoder(nn.Module):
         learn_rnn_initial_state: bool,
         heads: int,
         bidirectional: bool,
+        activation: AttentionActivation,
     ):
         super().__init__()
 
@@ -23,10 +26,8 @@ class ISTEncoder(nn.Module):
         elif num_tokens == 1:
             pass
         else:
-            self.attention = nn.MultiheadAttention(
-                embed_dim=token_dim,
-                num_heads=heads,
-                batch_first=True,
+            self.attention = AdditiveAttention(
+                hidden_dim=token_dim, query_dim=token_dim, activation=activation
             )
 
             self.tokens = nn.Parameter(torch.zeros(num_tokens, token_dim))
@@ -81,9 +82,9 @@ class ISTEncoder(nn.Module):
         )
 
         if self.num_tokens > 1:
-            query = rnn_h.unsqueeze(1)
+            query = rnn_h
             tokens = F.tanh(self.tokens)[None, :, :].expand(batch_size, -1, -1)
-            ist, w = self.attention(query=query, key=tokens, value=tokens)
+            ist, w = self.attention(query=query, keys=tokens)
             ist = ist.squeeze(1)
 
         else:

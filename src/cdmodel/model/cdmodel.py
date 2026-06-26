@@ -1,4 +1,4 @@
-from typing import Final, Literal
+from typing import Final, Literal, Optional
 
 import torch
 from lightning import pytorch as pl
@@ -46,7 +46,6 @@ class CDModel(pl.LightningModule):
         lin_h_dim: int,
         ar_train: bool,
         ar_val: bool,
-        train_primary_speaker_only: bool,
         output: FeatureFormat,
         input: list[FeatureFormat],
         enc_skip_conn: bool,
@@ -63,8 +62,12 @@ class CDModel(pl.LightningModule):
         ist_layers: int = 0,
         ist_in: IstInputs = [],
         ist_inputs=[],
-        ist_heads=1,
+        ist_heads=0,
         ist_bidirectional: bool = False,
+        ist_activation: Optional[AttentionActivation] = None,
+        train_primary_speaker_only: bool = False,
+        val_primary_speaker_only: bool = False,
+        train_teacher_forcing: float = 0.0,
     ):
         super().__init__()
         self.save_hyperparameters()
@@ -72,6 +75,7 @@ class CDModel(pl.LightningModule):
         self.num_features: Final[int] = len(feature_names)
         self.ar_train: Final[bool] = ar_train
         self.ar_val: Final[bool] = ar_val
+        self.train_teacher_forcing: Final[float] = train_teacher_forcing
 
         self.att_style: (
             Literal["single"] | Literal["dual"] | Literal["fused"] | Literal["none"]
@@ -85,6 +89,7 @@ class CDModel(pl.LightningModule):
         self.att_mask_strategy: Final[AttentionMaskingStrategy] = att_mask_strategy
 
         self.train_primary_speaker_only: Final[bool] = train_primary_speaker_only
+        self.val_primary_speaker_only: Final[bool] = val_primary_speaker_only
         self.output: Final[FeatureFormat] = output
         self.input: Final[list[FeatureFormat]] = input
 
@@ -104,6 +109,9 @@ class CDModel(pl.LightningModule):
         self.ist_dim: Final[int] = ist_dim
         self.ist_enc: nn.Module | None = None
         if ist:
+            if ist_activation is None:
+                raise Exception("If ist is enabled, ist_activation cannot be None")
+
             self.ist_enc = ISTEncoder(
                 in_dim=ist_input_dim,
                 num_tokens=ist_tokens,
@@ -112,6 +120,7 @@ class CDModel(pl.LightningModule):
                 learn_rnn_initial_state=learn_rnn_initial_state,
                 bidirectional=ist_bidirectional,
                 heads=ist_heads,
+                activation=ist_activation,
             )
 
         # Encoder
@@ -237,6 +246,7 @@ class CDModel(pl.LightningModule):
         spk_sex: Tensor,
         segment_emb: Tensor | None,
         autoregressive: bool,
+        teacher_forcing: float = 0.0,
     ):
         # Pull some metadata from the inputs
         (batch_size, num_steps, _), device = f.shape, f.device
@@ -261,6 +271,14 @@ class CDModel(pl.LightningModule):
 
             ist_1, ist_1_w = self.ist_enc(ist_input[1], sides_lengths[1])
             ist_2, ist_2_w = self.ist_enc(ist_input[2], sides_lengths[2])
+
+            if (
+                self.trainer.global_step % self.trainer.log_every_n_steps == 0
+                and ist_1_w is not None
+                and ist_2_w is not None
+            ):
+                print(ist_1_w[0])
+                print(ist_2_w[0])
 
             style_emb[1] = ist_1
             style_emb[2] = ist_2
@@ -384,6 +402,12 @@ class CDModel(pl.LightningModule):
             if autoregressive:
                 enc_in_t = enc_in_t.clone()
                 spk_is_primary_t = spk_is_1_t_arr[i + 1]
+
+                # Teacher forcing
+                spk_is_primary_t = spk_is_primary_t & (
+                    torch.rand(spk_is_primary_t.shape, device=device)
+                    < (1 - teacher_forcing)
+                )
                 enc_in_t[spk_is_primary_t, :, : self.num_features] = y_hat_t.detach()[
                     spk_is_primary_t
                 ].type_as(enc_in_t)
@@ -439,6 +463,7 @@ class CDModel(pl.LightningModule):
             spk_sex=batch.speaker_sex,
             segment_emb=batch.segment_embeddings,
             autoregressive=self.ar_train,
+            teacher_forcing=self.train_teacher_forcing,
         )
 
         if self.output == "feature":
@@ -572,7 +597,7 @@ class CDModel(pl.LightningModule):
         else:
             raise ValueError(f"Unknown output format {self.output}")
 
-        if self.train_primary_speaker_only:
+        if self.val_primary_speaker_only:
             mask = batch.speaker_side[:, 1:] == 1
         else:
             mask = batch.speaker_side[:, 1:] != 0

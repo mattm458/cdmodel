@@ -84,15 +84,12 @@ class DecoderCell(nn.Module):
             q if self.att_ctx_dim == 0 else torch.concat([q, att_ctx], -1)
         )
 
-        if precomputed_keys is not None:
-            att_out, att_weights = self.attention(
-                query=att_in,
-                keys=precomputed_keys,
-                mask=mask,
-                precomputed_keys=True,
-            )
-        else:
-            att_out, att_weights = self.attention(query=att_in, keys=input, mask=mask)
+        att_out, att_weights = self.attention(
+            query=att_in,
+            keys=input,
+            mask=mask,
+            precomputed_keys=precomputed_keys,
+        )
 
         if encoder_skip is not None:
             att_out = att_out + encoder_skip

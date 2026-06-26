@@ -57,4 +57,8 @@ class AdditiveAttention(nn.Module):
                 raise Exception(f"Unknown attention activation {self.activation}!")
 
         context = weights.permute(0, 2, 1) @ keys
+
+        if self.activation == "sigmoid":
+            context = F.tanh(context)
+
         return context, weights
